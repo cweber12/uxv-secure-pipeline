@@ -24,3 +24,6 @@ cmake-build-*/
 # Logs & env
 *.log
 .env*
+
+# Protobuf generated files
+gen/
