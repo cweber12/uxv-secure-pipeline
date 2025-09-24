@@ -1,0 +1,26 @@
+syntax = "proto3";
+package uxv.v1;
+
+option go_package = "github.com/yourorg/uxv-secure-pipeline/gen/go/uxv/v1;v1";
+
+message BBox {
+  float x = 1;   // pixel or normalized
+  float y = 2;
+  float w = 3;
+  float h = 4;
+}
+
+message Detection {
+  int64 ts_ns = 1;        // frame timestamp
+  string cls = 2;         // class label
+  float confidence = 3;
+  BBox bbox = 4;
+  double lat = 5;         // optional geotag
+  double lon = 6;
+}
+
+message DetectionAck { bool ok = 1; }
+
+service DetectionIngest {
+  rpc StreamDetections (stream Detection) returns (DetectionAck);
+}

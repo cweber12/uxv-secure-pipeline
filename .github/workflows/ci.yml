@@ -1,0 +1,20 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  proto-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Verify protoc version
+        run: protoc --version
+      - name: Generate Go stubs (canary)
+        run: |
+          sudo apt-get install -y golang
+          mkdir -p gen/go
+          protoc --go_out=gen/go --go_opt=paths=source_relative \
+                 --go-grpc_out=gen/go --go-grpc_opt=paths=source_relative \
+                 proto/*.proto
+      - name: Basic lint (EOL/CRLF check)
+        run: test -z "$(git ls-files --eol | grep 'crlf')"

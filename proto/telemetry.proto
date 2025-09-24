@@ -1,0 +1,21 @@
+syntax = "proto3";
+package uxv.v1;
+
+message Telemetry {
+  int64 ts_ns = 1;            // monotonic nanoseconds
+  double lat = 2;
+  double lon = 3;
+  double alt_m = 4;
+  float yaw_deg = 5;
+  float pitch_deg = 6;
+  float roll_deg = 7;
+  float vn = 8;               // NED velocities (m/s)
+  float ve = 9;
+  float vd = 10;
+}
+
+message TelemetryAck { bool ok = 1; }
+
+service TelemetryIngest {
+  rpc StreamTelemetry (stream Telemetry) returns (TelemetryAck);
+}
