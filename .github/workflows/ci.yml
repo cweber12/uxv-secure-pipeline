@@ -49,8 +49,8 @@ jobs:
           python - << 'PY'
           import sys, pathlib
           sys.path.insert(0, str(pathlib.Path("gen/python").resolve()))
-          from uxv.v1 import telemetry_pb2, telemetry_pb2_grpc
-          from uxv.v1 import detections_pb2, detections_pb2_grpc
+          import telemetry_pb2, telemetry_pb2_grpc
+          import detections_pb2, detections_pb2_grpc
           print("Imports OK:", telemetry_pb2.__name__, detections_pb2.__name__)
           PY
 
