@@ -97,8 +97,12 @@ async function main(addr) {
       )
     : grpc.credentials.createInsecure();
 
-  const telClient = new proto.TelemetryIngest(target, creds);
-  const detClient = new proto.DetectionIngest(target, creds);
+  const opts = {};
+  if (process.env.TLS_OVERRIDE_HOST) {
+    opts['grpc.ssl_target_name_override'] = process.env.TLS_OVERRIDE_HOST;
+  }
+  const telClient = new proto.TelemetryIngest(target, creds, opts);
+  const detClient = new proto.DetectionIngest(target, creds, opts);
 
   await Promise.all([sendTelemetry(telClient), sendDetections(detClient)]);
   console.log('[node-edge] done');

@@ -27,3 +27,7 @@ cmake-build-*/
 
 # Protobuf generated files
 gen/
+
+# Certificates
+creds/
+

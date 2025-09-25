@@ -92,7 +92,7 @@ python -m grpc_tools.protoc -I proto \
   proto/telemetry.proto proto/detections.proto
 ```
 
-## Quickstart: Run the Demo (Python ↔ Python)
+## Quickstart: Run the Demo
 
 ### Terminal A – Ground server:
 
@@ -164,24 +164,39 @@ creds/
 ### Generate dev certs
 
 **Windows (PowerShell):**
-    .\scripts\make_certs.ps1
+
+```powershell
+.\scripts\make_certs.ps1
+```
 
 **macOS/Linux (Bash):**
-    bash scripts/make_certs.sh
+
+```bash
+bash scripts/make_certs.sh
+```
 
 ### Run with mTLS
 
 **Ground (server):**
-    $env:TLS="1"; $env:CERT_DIR="creds"
-    python -u -m ground.server
+
+```powershell
+$env:TLS="1"; $env:CERT_DIR="creds"
+python -u -m ground.server
+```
 
 **Edge (Python):**
-    $env:TLS="1"; $env:CERT_DIR="creds"
-    python -u -m edge.client
+
+```powershell
+$env:TLS="1"; $env:CERT_DIR="creds"
+python -u -m edge.client
+```
 
 **Edge (Node, optional):**
-    $env:TLS="1"; $env:CERT_DIR="creds"
-    node .\edge-node\client.js
+
+```powershell
+$env:TLS="1"; $env:CERT_DIR="creds"
+node .\edge-node\client.js
+```
 
 ## CI (GitHub Actions)
 
