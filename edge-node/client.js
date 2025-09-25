@@ -5,6 +5,7 @@
 // Note: run python -u .\ground\server.py first to start the server
 // Requires: npm install @grpc/grpc-js @grpc/proto-loader
 
+const fs = require('fs');
 const grpc = require('@grpc/grpc-js');
 const protoLoader = require('@grpc/proto-loader');
 const path = require('path');

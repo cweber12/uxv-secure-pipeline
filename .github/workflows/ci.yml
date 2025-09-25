@@ -54,46 +54,51 @@ jobs:
           python -m pip install --upgrade pip
           pip install grpcio grpcio-tools
 
-      # Generate stubs with your PS script (venv ACTIVATED here)
+      # Generate stubs using your PowerShell script
       - name: Generate Python stubs (PowerShell)
         shell: pwsh
         run: |
           .\.venv\Scripts\Activate.ps1
           .\scripts\make_proto.ps1
-          Get-ChildItem gen\python | Out-Host
+          # sanity: stubs import check
+          python -c "import sys, pathlib; sys.path.insert(0, str(pathlib.Path('gen/python').resolve())); import telemetry_pb2, telemetry_pb2_grpc, detections_pb2, detections_pb2_grpc; print('Imports OK')"
 
-      # Make certs with your PS script (no venv needed, but harmless to activate)
+      # Make dev certs using your PowerShell script
       - name: Make dev certs for mTLS (PowerShell)
         shell: pwsh
         run: |
           .\.venv\Scripts\Activate.ps1
           .\scripts\make_certs.ps1
+          Get-ChildItem creds | Out-Host
 
-      # Launch Ground (TLS) using venv python (no activation needed since we call the exe)
+      # Launch Ground (TLS) in background with explicit WorkingDirectory
       - name: Launch Ground (bg, TLS)
         shell: pwsh
         run: |
           $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
-          $env:TLS = "1"; $env:CERT_DIR = "creds"
+          $env:TLS = "1"; $env:CERT_DIR = "creds"; $env:BIND_ADDR = "127.0.0.1"
           $python = ".\.venv\Scripts\python.exe"
           $p = Start-Process -FilePath $python `
                 -ArgumentList '-u','-m','ground.server' `
                 -NoNewWindow `
                 -RedirectStandardOutput ground.out.log `
                 -RedirectStandardError ground.err.log `
+                -WorkingDirectory (Get-Location) `
                 -PassThru
           $p.Id | Out-File ground.pid -Encoding ascii
           Start-Sleep -Seconds 2
           Get-Content ground.out.log -TotalCount 50 -ErrorAction SilentlyContinue | Out-Host
           Get-Content ground.err.log -TotalCount 50 -ErrorAction SilentlyContinue | Out-Host
 
+      # Wait for TCP port; if it fails, we will see the Python traceback from the new bind-check above
       - name: Wait for :50051
         shell: pwsh
         run: |
-          $deadline = (Get-Date).AddSeconds(90)
+          $deadline = (Get-Date).AddSeconds(120)
           while ((Get-Date) -lt $deadline) {
-            if (Test-NetConnection -ComputerName 127.0.0.1 -Port 50051 -InformationLevel Quiet) {
-              Write-Host "Ground is up on 127.0.0.1:50051"
+            if (Test-NetConnection -ComputerName 127.0.0.1 -Port 50051 -InformationLevel Quiet `
+                -or Test-NetConnection -ComputerName localhost -Port 50051 -InformationLevel Quiet) {
+              Write-Host "Ground is up on :50051"
               exit 0
             }
             Start-Sleep -Seconds 1
@@ -101,16 +106,18 @@ jobs:
           Write-Error "Ground did not start in time"
           exit 1
 
-      - name: Show ground.log on failure
+      - name: Show Ground logs on failure
         if: failure()
         shell: pwsh
         run: |
-          Write-Host "===== ground.out.log (last 200 lines) ====="
+          Write-Host "===== ground.out.log (last 200) ====="
           Get-Content ground.out.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
-          Write-Host "===== ground.err.log (last 200 lines) ====="
+          Write-Host "===== ground.err.log (last 200) ====="
           Get-Content ground.err.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
+          Write-Host "===== netstat :50051 ====="
+          netstat -ano | Select-String -Pattern ":50051" | Out-Host
 
-      # Python Edge (TLS) — activate venv, then run
+      # Python Edge (TLS)
       - name: Run Python Edge (TLS)
         shell: pwsh
         run: |
@@ -155,14 +162,15 @@ jobs:
           if (-not (Select-String -Path edge_node.log -Pattern "\[node-edge\] detections ack= true" -Quiet)) { Write-Error "Node detections ack missing"; exit 1 }
           Write-Host "Node Edge acks found."
 
+      # Teardown & artifacts
       - name: Stop Ground
         if: always()
         shell: pwsh
         run: |
           if (Test-Path ground.pid) {
-            $pid = Get-Content ground.pid
-            Write-Host "Killing Ground PID $pid"
-            Stop-Process -Id $pid -ErrorAction SilentlyContinue
+            $srvPid = Get-Content ground.pid
+            Write-Host "Killing Ground PID $srvPid"
+            Stop-Process -Id $srvPid -ErrorAction SilentlyContinue
           }
 
       - name: Upload logs
