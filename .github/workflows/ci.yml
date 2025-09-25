@@ -46,6 +46,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install runtime deps
+        shell: pwsh
         run: |
           python -m venv .\.venv
           .\.venv\Scripts\activate
