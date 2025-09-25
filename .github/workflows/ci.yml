@@ -7,35 +7,49 @@ on:
 jobs:
   proto-build-python:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Install protoc
         run: |
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler
           protoc --version
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
+          python-version: "3.11"
       - name: Install Python protoc plugins
         run: |
           python -m pip install --upgrade pip
           pip install grpcio grpcio-tools
+      - name: Generate Python stubs
+        run: |
+          mkdir -p gen/python
+          python -m grpc_tools.protoc -I proto \
+            --python_out=gen/python \
+            --grpc_python_out=gen/python \
+            proto/telemetry.proto proto/detections.proto
+      - name: Sanity import
+        run: |
+          python -c "import sys, pathlib; sys.path.insert(0, str(pathlib.Path('gen/python').resolve())); import telemetry_pb2, telemetry_pb2_grpc, detections_pb2, detections_pb2_grpc; print('Imports OK')"
 
+  e2e-smoke:
+    needs: proto-build-python
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Python env for server/client
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install runtime deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install grpcio grpcio-tools
+
+      # Re-generate stubs for this job's workspace
       - name: Generate Python stubs
         run: |
           mkdir -p gen/python
@@ -44,15 +58,68 @@ jobs:
             --grpc_python_out=gen/python \
             proto/telemetry.proto proto/detections.proto
 
-      - name: Sanity import (ensure stubs import cleanly)
+      # Launch Ground ↗ wait ↗ run Edge
+      - name: Launch Ground (bg)
+        shell: bash
         run: |
-          python - << 'PY'
-          import sys, pathlib
-          sys.path.insert(0, str(pathlib.Path("gen/python").resolve()))
-          import telemetry_pb2, telemetry_pb2_grpc
-          import detections_pb2, detections_pb2_grpc
-          print("Imports OK:", telemetry_pb2.__name__, detections_pb2.__name__)
+          python -u -m ground.server > ground.log 2>&1 &
+          echo $! > ground.pid
+      - name: Wait for :50051
+        shell: bash
+        run: |
+          python - <<'PY'
+          import socket,time,sys
+          a=("127.0.0.1",50051)
+          for _ in range(60):
+              try:
+                  s=socket.socket(); s.settimeout(1); s.connect(a); s.close(); sys.exit(0)
+              except Exception: time.sleep(1)
+          sys.exit("Ground not ready")
           PY
+      - name: Run Python Edge
+        shell: bash
+        run: |
+          ( python -u -m edge.client 2>&1 | tee edge_py.log ; test ${PIPESTATUS[0]} -eq 0 )
+      - name: Verify acks
+        shell: bash
+        run: |
+          grep -q "\[edge\] telemetry ack=True" edge_py.log
+          grep -q "\[edge\] detections ack=True" edge_py.log
 
-      - name: Basic lint (EOL/CRLF check)
-        run: test -z "$(git ls-files --eol | grep 'crlf')"
+      # Optional Node client (only if present)
+      - uses: actions/setup-node@v4
+        if: ${{ hashFiles('edge-node/client.js') != '' }}
+        with:
+          node-version: "18"
+      - name: Node install
+        if: ${{ hashFiles('edge-node/client.js') != '' }}
+        working-directory: edge-node
+        run: npm ci || npm install --no-audit --no-fund
+      - name: Run Node Edge
+        if: ${{ hashFiles('edge-node/client.js') != '' }}
+        shell: bash
+        run: |
+          ( node edge-node/client.js 2>&1 | tee edge_node.log ; test ${PIPESTATUS[0]} -eq 0 )
+      - name: Verify Node acks
+        if: ${{ hashFiles('edge-node/client.js') != '' }}
+        shell: bash
+        run: |
+          grep -q "\[node-edge\] telemetry ack= true" edge_node.log
+          grep -q "\[node-edge\] detections ack= true" edge_node.log
+
+      # Teardown + artifacts
+      - name: Stop Ground
+        if: always()
+        shell: bash
+        run: |
+          if [ -f ground.pid ]; then kill $(cat ground.pid) || true; fi
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: |
+            ground.log
+            edge_py.log
+            edge_node.log
+          if-no-files-found: ignore

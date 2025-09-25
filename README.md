@@ -26,6 +26,7 @@ An end-to-end, **contracts-first** system for secure, low-latency ingest of UxV 
 
 ## Repository Structure
 
+```md
 proto/ # Protobuf contracts (telemetry.proto, detections.proto)
 ground/
 server.py # gRPC server (receives streams, logs, records JSONL)
@@ -44,6 +45,7 @@ docs/ # Architecture notes, ADRs (reserved for future additions)
 .github/
 workflows/
 ci.yml # Proto build + sanity import (Python-based canary)
+```
 
 **Generated code** goes under `gen/` and is **not** committed. See `.gitignore` guidance below.
 
