@@ -62,24 +62,43 @@ jobs:
       - name: Launch Ground (bg)
         shell: bash
         run: |
+          set -euo pipefail
+          export PYTHONPATH="$(pwd)/gen/python"
+          echo "PYTHONPATH=$PYTHONPATH"
           python -u -m ground.server > ground.log 2>&1 &
           echo $! > ground.pid
+          sleep 2
+          head -n 50 ground.log || true
+      
       - name: Wait for :50051
         shell: bash
         run: |
           python - <<'PY'
           import socket,time,sys
           a=("127.0.0.1",50051)
-          for _ in range(60):
-              try:
-                  s=socket.socket(); s.settimeout(1); s.connect(a); s.close(); sys.exit(0)
-              except Exception: time.sleep(1)
-          sys.exit("Ground not ready")
+          for _ in range(90):
+            try:
+              with socket.create_connection(a, timeout=1.0):
+                  print("Ground is up on 127.0.0.1:50051")
+                  sys.exit(0)
+            except OSError: time.sleep(1)
+          print("ERROR: Ground did not start in time", file=sys.stderr)
+          sys.exit(1)
           PY
+
+      - name: Show ground.log on failure
+        if: failure()
+        run: |
+          echo "===== ground.log (last 200 lines) ====="
+          tail -n 200 ground.log || true
+
       - name: Run Python Edge
         shell: bash
         run: |
+          set -euo pipefail
+          export PYTHONPATH="$(pwd)/gen/python"
           ( python -u -m edge.client 2>&1 | tee edge_py.log ; test ${PIPESTATUS[0]} -eq 0 )
+     
       - name: Verify acks
         shell: bash
         run: |
@@ -112,7 +131,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          if [ -f ground.pid ]; then kill $(cat ground.pid) || true; fi
+          if [ -f ground.pid ]; then echo "Killing Ground PID $(cat ground.pid)"; kill $(cat ground.pid) || true; sleep 1; fi
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
