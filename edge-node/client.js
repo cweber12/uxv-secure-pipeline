@@ -83,9 +83,22 @@ async function sendDetections(client, n = 5, hz = 2) {
 }
 
 // Main function to create clients and send messages
-async function main(addr = 'localhost:50051') {
-  const telClient = new proto.TelemetryIngest(addr, grpc.credentials.createInsecure());
-  const detClient = new proto.DetectionIngest(addr, grpc.credentials.createInsecure());
+async function main(addr) {
+  const target = addr || process.argv[2] || process.env.ADDR || 'localhost:50051';
+  const tls = process.env.TLS === '1';
+  const certDir = process.env.CERT_DIR || 'creds';
+
+  const creds = tls
+    ? grpc.credentials.createSsl(
+        fs.readFileSync(path.join(certDir, 'ca.crt')),
+        fs.readFileSync(path.join(certDir, 'client.key')),
+        fs.readFileSync(path.join(certDir, 'client.crt'))
+      )
+    : grpc.credentials.createInsecure();
+
+  const telClient = new proto.TelemetryIngest(target, creds);
+  const detClient = new proto.DetectionIngest(target, creds);
+
   await Promise.all([sendTelemetry(telClient), sendDetections(detClient)]);
   console.log('[node-edge] done');
 }

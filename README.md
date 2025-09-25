@@ -141,6 +141,48 @@ npm start
 The Ground server logs should look the same as with the Python Edge.
 The Node client loads ../proto/*.proto at runtime (no codegen) via @grpc/proto-loader.
 
+## Security
+
+Supports **mutual TLS (mTLS)** for all gRPC calls: encrypts traffic and **authenticates both client and server**.
+
+### How to enable
+
+- Set `TLS=1` to enable mTLS.
+- Set `CERT_DIR` to the folder containing PEM files (default: `creds/`).
+
+### Cert layout
+
+```txt
+creds/
+    ca.crt       # Root CA
+    server.crt   # Server cert (signed by CA)
+    server.key   # Server key
+    client.crt   # Client cert (signed by CA)
+    client.key   # Client key
+```
+
+### Generate dev certs
+
+**Windows (PowerShell):**
+    .\scripts\make_certs.ps1
+
+**macOS/Linux (Bash):**
+    bash scripts/make_certs.sh
+
+### Run with mTLS
+
+**Ground (server):**
+    $env:TLS="1"; $env:CERT_DIR="creds"
+    python -u -m ground.server
+
+**Edge (Python):**
+    $env:TLS="1"; $env:CERT_DIR="creds"
+    python -u -m edge.client
+
+**Edge (Node, optional):**
+    $env:TLS="1"; $env:CERT_DIR="creds"
+    node .\edge-node\client.js
+
 ## CI (GitHub Actions)
 
 - Installs protoc, sets up Python 3.11, and installs grpcio-tools.

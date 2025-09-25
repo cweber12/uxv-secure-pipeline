@@ -40,36 +40,40 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Python env for server/client
+      # Python runtime for server/client
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Install runtime deps
         run: |
           python -m pip install --upgrade pip
           pip install grpcio grpcio-tools
 
-      # Re-generate stubs for this job's workspace
-      - name: Generate Python stubs
-        run: |
-          mkdir -p gen/python
-          python -m grpc_tools.protoc -I proto \
-            --python_out=gen/python \
-            --grpc_python_out=gen/python \
-            proto/telemetry.proto proto/detections.proto
+      # --- Use your PowerShell scripts ---
+      - name: Generate Python stubs (PowerShell)
+        shell: pwsh
+        run: .\scripts\make_proto.ps1
 
-      # Launch Ground ↗ wait ↗ run Edge
-      - name: Launch Ground (bg)
+      - name: Make dev certs for mTLS (PowerShell)
+        shell: pwsh
+        run: .\scripts\make_certs.ps1
+
+      - name: List generated stubs (debug)
+        run: ls -la gen/python || true
+
+      # --- Launch Ground with TLS ---
+      - name: Launch Ground (bg, TLS)
         shell: bash
         run: |
           set -euo pipefail
           export PYTHONPATH="$(pwd)/gen/python"
-          echo "PYTHONPATH=$PYTHONPATH"
+          export TLS=1 CERT_DIR=creds
           python -u -m ground.server > ground.log 2>&1 &
           echo $! > ground.pid
           sleep 2
           head -n 50 ground.log || true
-      
+
       - name: Wait for :50051
         shell: bash
         run: |
@@ -79,8 +83,7 @@ jobs:
           for _ in range(90):
             try:
               with socket.create_connection(a, timeout=1.0):
-                  print("Ground is up on 127.0.0.1:50051")
-                  sys.exit(0)
+                print("Ground is up on 127.0.0.1:50051"); sys.exit(0)
             except OSError: time.sleep(1)
           print("ERROR: Ground did not start in time", file=sys.stderr)
           sys.exit(1)
@@ -92,33 +95,40 @@ jobs:
           echo "===== ground.log (last 200 lines) ====="
           tail -n 200 ground.log || true
 
-      - name: Run Python Edge
+      # --- Python Edge (TLS) ---
+      - name: Run Python Edge (TLS)
         shell: bash
         run: |
           set -euo pipefail
           export PYTHONPATH="$(pwd)/gen/python"
+          export TLS=1 CERT_DIR=creds
           ( python -u -m edge.client 2>&1 | tee edge_py.log ; test ${PIPESTATUS[0]} -eq 0 )
-     
-      - name: Verify acks
+
+      - name: Verify Python acks
         shell: bash
         run: |
           grep -q "\[edge\] telemetry ack=True" edge_py.log
           grep -q "\[edge\] detections ack=True" edge_py.log
 
-      # Optional Node client (only if present)
+      # --- Optional Node Edge (TLS) ---
       - uses: actions/setup-node@v4
         if: ${{ hashFiles('edge-node/client.js') != '' }}
         with:
           node-version: "18"
+
       - name: Node install
         if: ${{ hashFiles('edge-node/client.js') != '' }}
         working-directory: edge-node
         run: npm ci || npm install --no-audit --no-fund
-      - name: Run Node Edge
+
+      - name: Run Node Edge (TLS)
         if: ${{ hashFiles('edge-node/client.js') != '' }}
         shell: bash
         run: |
+          set -euo pipefail
+          export TLS=1 CERT_DIR=creds
           ( node edge-node/client.js 2>&1 | tee edge_node.log ; test ${PIPESTATUS[0]} -eq 0 )
+
       - name: Verify Node acks
         if: ${{ hashFiles('edge-node/client.js') != '' }}
         shell: bash
@@ -126,12 +136,13 @@ jobs:
           grep -q "\[node-edge\] telemetry ack= true" edge_node.log
           grep -q "\[node-edge\] detections ack= true" edge_node.log
 
-      # Teardown + artifacts
+      # --- Teardown & artifacts ---
       - name: Stop Ground
         if: always()
         shell: bash
         run: |
           if [ -f ground.pid ]; then echo "Killing Ground PID $(cat ground.pid)"; kill $(cat ground.pid) || true; sleep 1; fi
+
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -142,3 +153,4 @@ jobs:
             edge_py.log
             edge_node.log
           if-no-files-found: ignore
+

@@ -3,6 +3,7 @@
 import asyncio
 import grpc
 import sys, pathlib
+import os
 
 # Make generated stubs importable (expects stubs in gen/python/)
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "gen" / "python"))
@@ -74,23 +75,52 @@ class DetectionIngestService(detections_pb2_grpc.DetectionIngestServicer):
 # Main server setup and loop
 # -----------------------------------------------------------------------
 
+def _load_bytes(p: pathlib.Path) -> bytes:
+    """Read a file and return its contents as bytes."""
+    return p.read_bytes()
+
 # Start the gRPC server and listen for incoming connections
 async def serve(host: str = "127.0.0.1", port: int = 50051):
+    """
+    Start the gRPC server.
+    - Insecure by default.
+    - When TLS=1 (env), start with mTLS using certs under CERT_DIR (default: creds/).
+    """
     recorder = JsonlRecorder(root=pathlib.Path("missions"))
+
     server = grpc.aio.server(options=[
-        # Increase max message size to 20 MiB
-        ("grpc.max_receive_message_length", 20 * 1024 * 1024),
-        # Enable keepalive pings every 20 seconds
-        ("grpc.keepalive_time_ms", 20000),
+        ("grpc.max_receive_message_length", 20 * 1024 * 1024),  # 20 MiB
+        ("grpc.keepalive_time_ms", 20_000),                     # 20s keepalive
     ])
 
+    # Register services
     telemetry_pb2_grpc.add_TelemetryIngestServicer_to_server(TelemetryIngestService(recorder), server)
     detections_pb2_grpc.add_DetectionIngestServicer_to_server(DetectionIngestService(recorder), server)
 
-    addr = f"{host}:{port}" # bind address
-    server.add_insecure_port(addr)  # no TLS yet
-    print(f"[ground] listening on {addr}")
-    await server.start() # start the server
+    addr = f"{host}:{port}"
+
+    # Toggle TLS via environment
+    use_tls = os.getenv("TLS", "0") == "1"
+    cert_dir = pathlib.Path(os.getenv("CERT_DIR", "creds"))
+
+    if use_tls:
+        # mTLS: server presents cert; client cert is required & verified against CA
+        server_key = _load_bytes(cert_dir / "server.key")
+        server_crt = _load_bytes(cert_dir / "server.crt")
+        ca_crt     = _load_bytes(cert_dir / "ca.crt")
+
+        credentials = grpc.ssl_server_credentials(
+            [(server_key, server_crt)],
+            root_certificates=ca_crt,
+            require_client_auth=True,
+        )
+        server.add_secure_port(addr, credentials)
+        print(f"[ground] TLS on @ {addr}")
+    else:
+        server.add_insecure_port(addr)
+        print(f"[ground] listening on {addr}")
+
+    await server.start()
     try:
         await server.wait_for_termination()
     finally:

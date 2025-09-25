@@ -4,6 +4,7 @@ import asyncio, time
 import grpc
 import sys, pathlib
 from random import random
+import os
 
 # Make generated stubs importable (expects stubs in gen/python/)
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "gen" / "python"))
@@ -61,15 +62,32 @@ async def send_detections(stub: detections_pb2_grpc.DetectionIngestStub, n=5, hz
     print(f"[edge] detections ack={ack.ok}")
 
 
-async def main(server_addr="localhost:50051"):
+def _b(p: pathlib.Path) -> bytes:
+    return p.read_bytes()
+
+async def main(server_addr: str | None = None):
     """
     Main entry point for the gRPC client.
+    - Insecure by default.
+    - When TLS=1 (env), use mTLS with certs under CERT_DIR (default: creds/).
     """
-    # Create a channel and stubs, then concurrently send telemetry and detections
-    async with grpc.aio.insecure_channel(server_addr) as channel:
+    server_addr = server_addr or os.getenv("ADDR", "localhost:50051")
+    use_tls = os.getenv("TLS", "0") == "1"
+    cert_dir = pathlib.Path(os.getenv("CERT_DIR", "creds"))
+
+    if use_tls:
+        creds = grpc.ssl_channel_credentials(
+            root_certificates=_b(cert_dir / "ca.crt"),
+            private_key=_b(cert_dir / "client.key"),
+            certificate_chain=_b(cert_dir / "client.crt"),
+        )
+        channel = grpc.aio.secure_channel(server_addr, creds)
+    else:
+        channel = grpc.aio.insecure_channel(server_addr)
+
+    async with channel:
         tel_stub = telemetry_pb2_grpc.TelemetryIngestStub(channel)
         det_stub = detections_pb2_grpc.DetectionIngestStub(channel)
-        # Run both sending tasks concurrently
         await asyncio.gather(
             send_telemetry(tel_stub),
             send_detections(det_stub),
