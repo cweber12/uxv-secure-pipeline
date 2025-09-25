@@ -79,12 +79,13 @@ jobs:
           $p = Start-Process -FilePath $python `
                 -ArgumentList '-u','-m','ground.server' `
                 -NoNewWindow `
-                -RedirectStandardOutput ground.log `
-                -RedirectStandardError ground.log `
+                -RedirectStandardOutput ground.out.log `
+                -RedirectStandardError ground.err.log `
                 -PassThru
           $p.Id | Out-File ground.pid -Encoding ascii
           Start-Sleep -Seconds 2
-          Get-Content ground.log -TotalCount 50 -ErrorAction SilentlyContinue | Out-Host
+          Get-Content ground.out.log -TotalCount 50 -ErrorAction SilentlyContinue | Out-Host
+          Get-Content ground.err.log -TotalCount 50 -ErrorAction SilentlyContinue | Out-Host
 
       - name: Wait for :50051
         shell: pwsh
@@ -104,8 +105,10 @@ jobs:
         if: failure()
         shell: pwsh
         run: |
-          Write-Host "===== ground.log (last 200 lines) ====="
-          Get-Content ground.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
+          Write-Host "===== ground.out.log (last 200 lines) ====="
+          Get-Content ground.out.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
+          Write-Host "===== ground.err.log (last 200 lines) ====="
+          Get-Content ground.err.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
 
       # Python Edge (TLS) — activate venv, then run
       - name: Run Python Edge (TLS)
@@ -168,7 +171,8 @@ jobs:
         with:
           name: e2e-logs
           path: |
-            ground.log
+            ground.out.log
+            ground.err.log
             edge_py.log
             edge_node.log
           if-no-files-found: ignore
