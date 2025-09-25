@@ -96,8 +96,8 @@ jobs:
         run: |
           $deadline = (Get-Date).AddSeconds(120)
           while ((Get-Date) -lt $deadline) {
-            if (Test-NetConnection -ComputerName 127.0.0.1 -Port 50051 -InformationLevel Quiet `
-                -or Test-NetConnection -ComputerName localhost -Port 50051 -InformationLevel Quiet) {
+            if ((Test-NetConnection -ComputerName 127.0.0.1 -Port 50051 -InformationLevel Quiet) -or `
+                (Test-NetConnection -ComputerName localhost -Port 50051 -InformationLevel Quiet)) {
               Write-Host "Ground is up on :50051"
               exit 0
             }
