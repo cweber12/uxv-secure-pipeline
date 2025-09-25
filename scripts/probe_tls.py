@@ -1,51 +1,61 @@
 # scripts/probe_tls.py
-from __future__ import annotations
-import argparse, os, sys, pathlib
-from time import monotonic
-import grpc
+import os, sys, time, pathlib, hashlib, grpc
+from concurrent.futures import TimeoutError as FutureTimeoutError
 
 def _b(p: pathlib.Path) -> bytes:
-    if not p.exists():
-        raise FileNotFoundError(f"missing: {p}")
-    return p.read_bytes()
+    b = p.read_bytes()
+    print(f"[probe]   - {p.name} exists={p.exists()} size={len(b)} sha256={hashlib.sha256(b).hexdigest()[:16]}")
+    return b
 
-def parse_args():
-    ap = argparse.ArgumentParser("gRPC TLS readiness probe (mTLS)")
-    ap.add_argument("--addr", default=os.getenv("ADDR","127.0.0.1:50051"))
-    ap.add_argument("--cert-dir", default=os.getenv("CERT_DIR","creds"))
-    ap.add_argument("--timeout", type=float, default=float(os.getenv("PROBE_TIMEOUT","60")))
-    ap.add_argument("--override-host", default=os.getenv("TLS_OVERRIDE_HOST","localhost"))
-    ap.add_argument("--insecure", action="store_true", default=os.getenv("TLS","1")=="0")
-    return ap.parse_args()
+def main():
+    addr     = os.getenv("ADDR", "127.0.0.1:50051")
+    cert_dir = pathlib.Path(os.getenv("CERT_DIR", "creds")).resolve()
+    timeout  = float(os.getenv("PROBE_TIMEOUT", "30.0"))
+    sni      = os.getenv("SNI", "localhost")
 
-def make_channel(addr: str, cert_dir: pathlib.Path, override: str, insecure: bool):
-    if insecure:
-        return grpc.insecure_channel(addr), "insecure"
-    creds = grpc.ssl_channel_credentials(
-        root_certificates=_b(cert_dir/"ca.crt"),
-        private_key=_b(cert_dir/"client.key"),
-        certificate_chain=_b(cert_dir/"client.crt"),
-    )
+    print(f"[probe] gRPC version: {grpc.__version__}")
+    print(f"[probe] Starting probe with args: addr={addr}, cert_dir={cert_dir}, timeout={timeout}")
+    print(f"[probe] Python: {sys.executable}")
+    print(f"[probe] CWD: {pathlib.Path.cwd()}")
+
+    ca = _b(cert_dir / "ca.crt")
+    ck = _b(cert_dir / "client.key")
+    cc = _b(cert_dir / "client.crt")
+
+    creds = grpc.ssl_channel_credentials(root_certificates=ca,
+                                         private_key=ck,
+                                         certificate_chain=cc)
+
     opts = [
-        ("grpc.ssl_target_name_override", override),
-        ("grpc.default_authority", override),
+        ("grpc.ssl_target_name_override", sni),  # match server cert CN/SAN=localhost
+        ("grpc.keepalive_time_ms", 10000),
     ]
-    return grpc.secure_channel(addr, creds, options=opts), "mtls"
+    print(f"[probe] Creating secure channel to {addr} (SNI={sni})")
+    ch = grpc.secure_channel(addr, creds, options=opts)
 
-def main() -> int:
-    args = parse_args()
-    ch, mode = make_channel(args.addr, pathlib.Path(args.cert_dir), args.override_host, args.insecure)
-    deadline = monotonic() + max(1.0, args.timeout)
+    # Observe connectivity transitions quickly
+    def watch(state):
+        print(f"[probe] connectivity -> {state}")
+    ch.subscribe(watch, try_to_connect=True)
+
+    print(f"[probe] Waiting for READY (timeout {timeout}s)…")
     try:
-        grpc.channel_ready_future(ch).result(timeout=max(1.0, deadline - monotonic()))
-        print(f"[probe] READY ({mode}) -> {args.addr} as {args.override_host}")
-        return 0
-    except Exception as e:
-        print(f"[probe] NOT READY ({mode}) -> {args.addr}: {e}")
-        return 1
+        grpc.channel_ready_future(ch).result(timeout=timeout)
+        print("[probe] READY: channel is secure and reachable.")
+        sys.exit(0)
+    except FutureTimeoutError:
+        print("[probe] ERROR: Timeout waiting for READY")
+        try:
+            ch_state = ch._channel.check_connectivity_state(True)  # best effort
+            print(f"[probe] final connectivity state: {ch_state}")
+        except Exception:
+            pass
+        sys.exit(1)
     finally:
         ch.close()
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
+
+
 

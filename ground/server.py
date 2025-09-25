@@ -1,45 +1,105 @@
 # ground/server.py
-# gRPC server to receive telemetry and detection streams
-import asyncio
-import grpc
-import sys, pathlib
 import os
-import logging
+import sys
+import ssl
+import grpc
+import asyncio
+import pathlib
+import hashlib
+from typing import Tuple
 
 # Make generated stubs importable (expects stubs in gen/python/)
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "gen" / "python"))
 
 import telemetry_pb2, telemetry_pb2_grpc
 import detections_pb2, detections_pb2_grpc
-from .recorder import JsonlRecorder
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+from recorder import JsonlRecorder  # package import (ground/__init__.py present)
 
-# -----------------------------------------------------------------------
-# Implement the service classes defined in the .proto files
-# -----------------------------------------------------------------------
+# ---------------------------- helpers ----------------------------
+
+def _resolve_addr(host: str | None = None, port: int | None = None,
+                  default_host: str = "127.0.0.1", default_port: int = 50051) -> Tuple[str, int]:
+    """
+    Resolve bind address from explicit args or environment.
+    Supported envs (priority order):
+      - BIND_ADDR or ADDR as 'host:port' or just 'host'
+      - HOST and PORT separately
+    """
+    h = host or default_host
+    p = port or default_port
+
+    combo = os.getenv("BIND_ADDR") or os.getenv("ADDR")
+    if combo:
+        if ":" in combo:
+            ch, cp = combo.rsplit(":", 1)
+            if ch: h = ch
+            try: p = int(cp)
+            except ValueError: pass
+        else:
+            h = combo
+
+    h = os.getenv("HOST", h)
+    try:
+        p = int(os.getenv("PORT", str(p)))
+    except ValueError:
+        pass
+
+    return h, p
+
+
+def _load_bytes(path: pathlib.Path, label: str) -> bytes:
+    b = path.read_bytes()
+    print(f"[tls] loaded {label} {path} bytes={len(b)} sha256={hashlib.sha256(b).hexdigest()[:16]}")
+    return b
+
+
+def _server_credentials(cert_dir: pathlib.Path, require_client_auth: bool = True) -> grpc.ServerCredentials:
+    """
+    Build gRPC ServerCredentials for mTLS from PEM files in cert_dir:
+      - ca.crt          (trust root to verify the client)
+      - server.crt/.key (server chain/key)
+    """
+    ca_path      = cert_dir / "ca.crt"
+    server_crt   = cert_dir / "server.crt"
+    server_key   = cert_dir / "server.key"
+
+    if not (ca_path.exists() and server_crt.exists() and server_key.exists()):
+        raise FileNotFoundError(f"Missing certs in {cert_dir}. Need ca.crt, server.crt, server.key")
+
+    ca_pem    = _load_bytes(ca_path, "ca.crt")
+    cert_pem  = _load_bytes(server_crt, "server.crt")
+    key_pem   = _load_bytes(server_key, "server.key")
+
+    creds = grpc.ssl_server_credentials(
+        private_key_certificate_chain_pairs=[(key_pem, cert_pem)],
+        root_certificates=ca_pem if require_client_auth else None,
+        require_client_auth=require_client_auth,
+    )
+    print(f"[tls] server credentials built (mTLS={'on' if require_client_auth else 'off'})")
+    return creds
+
+
+# ------------------------ gRPC services -------------------------
 
 class TelemetryIngestService(telemetry_pb2_grpc.TelemetryIngestServicer):
     def __init__(self, recorder: JsonlRecorder | None = None):
-        self.rec = recorder
+        self.recorder = recorder
 
     async def StreamTelemetry(self, request_iterator, context):
         count = 0
         async for msg in request_iterator:
             count += 1
             print(f"[telemetry] #{count} lat={msg.lat:.5f} lon={msg.lon:.5f} alt={msg.alt_m:.1f} ts={msg.ts_ns}")
-            if self.rec:
-                self.rec.write("telemetry", {
-                    "ts_ns": msg.ts_ns, "lat": msg.lat, "lon": msg.lon, "alt_m": msg.alt_m,
-                    "yaw_deg": msg.yaw_deg, "pitch_deg": msg.pitch_deg, "roll_deg": msg.roll_deg,
-                    "vn": msg.vn, "ve": msg.ve, "vd": msg.vd
-                })
+            if self.recorder:
+                self.recorder.write("telemetry", msg)
         print(f"[telemetry] stream closed, total={count}")
         return telemetry_pb2.TelemetryAck(ok=True)
 
+
 class DetectionIngestService(detections_pb2_grpc.DetectionIngestServicer):
     def __init__(self, recorder: JsonlRecorder | None = None):
-        self.rec = recorder
+        self.recorder = recorder
 
     async def StreamDetections(self, request_iterator, context):
         count = 0
@@ -48,78 +108,50 @@ class DetectionIngestService(detections_pb2_grpc.DetectionIngestServicer):
             bb = d.bbox
             print(f"[detection] #{count} {d.cls} conf={d.confidence:.2f} "
                   f"bbox=({bb.x:.1f},{bb.y:.1f},{bb.w:.1f},{bb.h:.1f}) ts={d.ts_ns}")
-            if self.rec:
-                self.rec.write("detection", {
-                    "ts_ns": d.ts_ns, "class": d.cls, "confidence": d.confidence,
-                    "bbox": {"x": bb.x, "y": bb.y, "w": bb.w, "h": bb.h},
-                    "lat": d.lat, "lon": d.lon
-                })
+            if self.recorder:
+                self.recorder.write("detection", d)
         print(f"[detection] stream closed, total={count}")
         return detections_pb2.DetectionAck(ok=True)
 
-# -----------------------------------------------------------------------
-# Main server setup and loop
-# -----------------------------------------------------------------------
 
-def _load_bytes(p: pathlib.Path) -> bytes:
-    """Read a file and return its contents as bytes."""
-    return p.read_bytes()
+# ----------------------- server bootstrap -----------------------
 
-def _addr_from_env(default_host="127.0.0.1", default_port=50051) -> tuple[str, int]:
-    host = os.getenv("BIND_ADDR", default_host)
-    port = int(os.getenv("PORT", str(default_port)))
-    return host, port
-
-# Start the gRPC server and listen for incoming connections
-async def serve(host: str | None = None, port: int | None = None):
+async def serve(host: str = "127.0.0.1", port: int = 50051):
     """
-    Start the gRPC server.
-    - Insecure by default.
-    - When TLS=1 (env), start with mTLS using certs under CERT_DIR (default: creds/).
+    Start gRPC server with optional mTLS (TLS=1 enables).
+    Uses CERT_DIR (default `creds/`) for PEMs. Enforces client certs when TLS=1.
     """
-    if host is None or port is None:
-        h, p = _addr_from_env()
-        host = host or h
-        port = port or p
+    tls_on   = os.getenv("TLS", "0") == "1"
+    cert_dir = pathlib.Path(os.getenv("CERT_DIR", "creds")).resolve()
+    host, port = _resolve_addr(host, port)
+
+    # Debug env variables that affect gRPC handshakes
+    print(f"[env] GRPC_VERBOSITY={os.getenv('GRPC_VERBOSITY')} GRPC_TRACE={os.getenv('GRPC_TRACE')}")
+    print(f"[env] TLS={os.getenv('TLS')} CERT_DIR={cert_dir} HOST={host} PORT={port}")
 
     recorder = JsonlRecorder(root=pathlib.Path("missions"))
 
-    server = grpc.aio.server(options=[
-        ("grpc.max_receive_message_length", 20 * 1024 * 1024),  # 20 MiB
-        ("grpc.keepalive_time_ms", 20_000),                     # 20s keepalive
-    ])
+    options = [
+        ("grpc.max_receive_message_length", 20 * 1024 * 1024),
+        ("grpc.keepalive_time_ms", 20000),
+    ]
+    server = grpc.aio.server(options=options)
 
-    # Register services
     telemetry_pb2_grpc.add_TelemetryIngestServicer_to_server(TelemetryIngestService(recorder), server)
     detections_pb2_grpc.add_DetectionIngestServicer_to_server(DetectionIngestService(recorder), server)
 
     addr = f"{host}:{port}"
+    if tls_on:
+        # Build mTLS creds
+        creds = _server_credentials(cert_dir, require_client_auth=True)
+        bound = server.add_secure_port(addr, creds)
+        print(f"[ground] TLS on @ {addr} (bound={bound})")
+    else:
+        bound = server.add_insecure_port(addr)
+        print(f"[ground] PLAINTEXT @ {addr} (bound={bound})")
 
-    # Toggle TLS via environment
-    #use_tls = os.getenv("TLS", "0") == "1"
-    cert_dir = pathlib.Path(os.getenv("CERT_DIR", "creds"))
-
-    #if use_tls:
-    # mTLS: server presents cert; client cert is required & verified against CA
-    server_key = _load_bytes(cert_dir / "server.key")
-    server_crt = _load_bytes(cert_dir / "server.crt")
-    ca_crt     = _load_bytes(cert_dir / "ca.crt")
-
-    credentials = grpc.ssl_server_credentials(
-        [(server_key, server_crt)],
-        root_certificates=ca_crt,
-        require_client_auth=True,
-    )
-    bound = server.add_secure_port(addr, credentials)
     if bound == 0:
-        raise RuntimeError(f"Failed to bind secure gRPC port on {addr} (check certs under {cert_dir})")
-    print(f"[ground] TLS on @ {addr} (bound={bound})")
-    
-    #else:
-        #bound = server.add_insecure_port(addr)
-        #if bound == 0:
-            #raise RuntimeError(f"Failed to bind insecure gRPC port on {addr}")
-        #print(f"[ground] listening on {addr} (bound={bound})")
+        raise RuntimeError(f"Failed to bind gRPC server to {addr} (check permissions / address in use)")
 
     await server.start()
     print("[ground] server started")
@@ -128,6 +160,6 @@ async def serve(host: str | None = None, port: int | None = None):
     finally:
         recorder.close()
 
+
 if __name__ == "__main__":
     asyncio.run(serve())
-

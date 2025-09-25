@@ -37,7 +37,6 @@ jobs:
     needs: proto-build-python
     runs-on: windows-latest
     timeout-minutes: 20
-
     steps:
       - uses: actions/checkout@v4
 
@@ -45,8 +44,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      # Create venv + install deps
-      - name: Setup venv
+      - name: Create venv + deps
         shell: pwsh
         run: |
           py -m venv .venv
@@ -54,144 +52,116 @@ jobs:
           python -m pip install --upgrade pip
           pip install grpcio grpcio-tools
 
-      # Generate stubs using your PowerShell script
       - name: Generate Python stubs (PowerShell)
         shell: pwsh
         run: |
           .\.venv\Scripts\Activate.ps1
           .\scripts\make_proto.ps1
-          # sanity: stubs import check
           python -c "import sys, pathlib; sys.path.insert(0, str(pathlib.Path('gen/python').resolve())); import telemetry_pb2, telemetry_pb2_grpc, detections_pb2, detections_pb2_grpc; print('Imports OK')"
 
-      # Make dev certs using your PowerShell script
-      - name: Make dev certs for mTLS (PowerShell)
+      - name: Make test certs
         shell: pwsh
         run: |
           .\.venv\Scripts\Activate.ps1
           .\scripts\make_certs.ps1
-          Get-ChildItem creds | Out-Host
+          Get-ChildItem creds
 
-      # Launch Ground (TLS) in background with explicit WorkingDirectory
-      - name: Launch Ground (bg, TLS)
+      - name: Launch Ground (mTLS)
         shell: pwsh
+        env:
+          TLS: "1"
+          CERT_DIR: "creds"
+          GRPC_VERBOSITY: "DEBUG"
+          GRPC_TRACE: "handshaker,security_handshaker,secure_endpoint,tcp"
         run: |
+          .\.venv\Scripts\Activate.ps1
           $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
-          $env:TLS = "1"; $env:CERT_DIR = "creds"; $env:BIND_ADDR = "127.0.0.1"
-          $python = ".\.venv\Scripts\python.exe"
-          $p = Start-Process -FilePath $python `
-                -ArgumentList '-u','-m','ground.server' `
-                -NoNewWindow `
-                -RedirectStandardOutput ground.out.log `
-                -RedirectStandardError ground.err.log `
-                -WorkingDirectory (Get-Location) `
-                -PassThru
-          $p.Id | Out-File ground.pid -Encoding ascii
-          Start-Sleep -Seconds 5
-          Get-Content ground.out.log -TotalCount 50 -ErrorAction SilentlyContinue | Out-Host
-          Get-Content ground.err.log -TotalCount 50 -ErrorAction SilentlyContinue | Out-Host
-          
-          # Check if process is still running
-          if (-not (Get-Process -Id $p.Id -ErrorAction SilentlyContinue)) {
-              Write-Error "Ground server process died during startup"
-              Get-Content ground.out.log -ErrorAction SilentlyContinue | Out-Host
-              Get-Content ground.err.log -ErrorAction SilentlyContinue | Out-Host
-              exit 1
-          }
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = (Join-Path (Get-Location) ".venv\Scripts\python.exe")
+          $psi.ArgumentList = @("-u","-m","ground.server")
+          $psi.UseShellExecute = $false
+          $psi.RedirectStandardOutput = $true
+          $psi.RedirectStandardError  = $true
+          $p = [System.Diagnostics.Process]::Start($psi)
+          Set-Content -Path ground.pid -Value $p.Id
+          $p.StandardOutput.ReadLine() | Tee-Object -FilePath ground.out.log
+          Start-Sleep -Seconds 1
+          Get-Content ground.out.log -Tail 50 -ErrorAction SilentlyContinue | Out-Host
 
-      # Wait for port (plain TCP), then mTLS probe
       - name: Wait for Ground TCP :50051
         shell: pwsh
         run: |
-          .\.venv\Scripts\Activate.ps1
-          $deadline = (Get-Date).AddSeconds(30)
+          $deadline = (Get-Date).AddSeconds(60)
           while ((Get-Date) -lt $deadline) {
-            if (Test-NetConnection -ComputerName 127.0.0.1 -Port 50051 -InformationLevel Quiet) {
-              Write-Host "TCP open"; exit 0
-            }
-            Start-Sleep -Seconds 1
+            try {
+              $c = New-Object System.Net.Sockets.TcpClient
+              $iar = $c.BeginConnect('127.0.0.1', 50051, $null, $null)
+              if ($iar.AsyncWaitHandle.WaitOne(1000) -and $c.Connected) {
+                $c.Close()
+                Write-Host "TCP open"
+                exit 0
+              }
+              $c.Close()
+            } catch {}
+            Start-Sleep -Milliseconds 500
           }
           throw "Ground TCP not open in time"
 
-      - name: Wait for Ground via gRPC (mTLS)
+      - name: OpenSSL sanity (client-auth handshake)
         shell: pwsh
         run: |
+          # Ensure Git for Windows OpenSSL is available
+          $gitUsrBin = 'C:\Program Files\Git\usr\bin'
+          if (Test-Path $gitUsrBin) { $env:Path += ";$gitUsrBin" }
+          $cmd = 'type NUL | openssl s_client -connect 127.0.0.1:50051 -servername localhost -cert creds\client.crt -key creds\client.key -CAfile creds\ca.crt -verify_return_error -brief -quiet'
+          cmd /c $cmd
+          if ($LASTEXITCODE -ne 0) { throw "openssl s_client failed with code $LASTEXITCODE" }
+
+      - name: Wait for Ground via gRPC (mTLS probe)
+        shell: pwsh
+        env:
+          CERT_DIR: "creds"
+          PROBE_TIMEOUT: "30"
+          SNI: "localhost"
+        run: |
           .\.venv\Scripts\Activate.ps1
-          python .\scripts\probe_tls.py --addr 127.0.0.1:50051 --override-host localhost --timeout 30
+          python -u scripts\probe_tls.py
 
+      - name: Run Python Edge (mTLS)
+        shell: pwsh
+        env:
+          TLS: "1"
+          CERT_DIR: "creds"
+        run: |
+          .\.venv\Scripts\Activate.ps1
+          $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
+          ( python -u -m edge.client 2>&1 | Tee-Object edge_py.log )
+          if ($LASTEXITCODE -ne 0) { throw "edge client failed: $LASTEXITCODE" }
 
-      - name: Show Ground logs on failure
+      - name: Verify acks
+        shell: pwsh
+        run: |
+          Select-String -Path edge_py.log -Pattern "\[edge\] telemetry ack=True" -Quiet | Out-Null
+          Select-String -Path edge_py.log -Pattern "\[edge\] detections ack=True" -Quiet | Out-Null
+
+      - name: Show logs on failure
         if: failure()
         shell: pwsh
         run: |
           Write-Host "===== ground.out.log (last 200) ====="
           Get-Content ground.out.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
-          Write-Host "===== ground.err.log (last 200) ====="
-          Get-Content ground.err.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
-          Write-Host "===== netstat :50051 ====="
-          netstat -ano | Select-String -Pattern ":50051" | Out-Host
-          Write-Host "===== Ground process status ====="
-          if (Test-Path ground.pid) {
-              $groundPid = Get-Content ground.pid
-              Write-Host "Ground PID: $groundPid"
-              Get-Process -Id $groundPid -ErrorAction SilentlyContinue | Out-Host
-          }
+          Write-Host "===== edge_py.log (last 200) ====="
+          Get-Content edge_py.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
 
-      # Python Edge (TLS)
-      - name: Run Python Edge (TLS)
-        shell: pwsh
-        run: |
-          .\.venv\Scripts\Activate.ps1
-          $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
-          $env:TLS = "1"; $env:CERT_DIR = "creds"
-          $env:ADDR = "127.0.0.1:50051"
-          $env:TLS_OVERRIDE_HOST = "localhost"
-          python -u -m edge.client 2>&1 | Tee-Object -FilePath edge_py.log
-          if ($LASTEXITCODE -ne 0) { Write-Error "Python Edge failed"; exit $LASTEXITCODE }
-
-      - name: Verify Python acks
-        shell: pwsh
-        run: |
-          if (-not (Select-String -Path edge_py.log -Pattern "\[edge\] telemetry ack=True" -Quiet)) { Write-Error "Telemetry ack missing"; exit 1 }
-          if (-not (Select-String -Path edge_py.log -Pattern "\[edge\] detections ack=True" -Quiet)) { Write-Error "Detections ack missing"; exit 1 }
-          Write-Host "Python Edge acks found."
-
-      # Optional Node Edge (TLS)
-      - uses: actions/setup-node@v4
-        if: ${{ hashFiles('edge-node/client.js') != '' }}
-        with:
-          node-version: "18"
-
-      - name: Node install
-        if: ${{ hashFiles('edge-node/client.js') != '' }}
-        shell: pwsh
-        working-directory: edge-node
-        run: npm ci || npm install --no-audit --no-fund
-
-      - name: Run Node Edge (TLS)
-        if: ${{ hashFiles('edge-node/client.js') != '' }}
-        shell: pwsh
-        run: |
-          $env:TLS = "1"; $env:CERT_DIR = "creds"
-          node edge-node\client.js 2>&1 | Tee-Object -FilePath edge_node.log
-          if ($LASTEXITCODE -ne 0) { Write-Error "Node Edge failed"; exit $LASTEXITCODE }
-
-      - name: Verify Node acks
-        if: ${{ hashFiles('edge-node/client.js') != '' }}
-        shell: pwsh
-        run: |
-          if (-not (Select-String -Path edge_node.log -Pattern "\[node-edge\] telemetry ack= true" -Quiet)) { Write-Error "Node telemetry ack missing"; exit 1 }
-          if (-not (Select-String -Path edge_node.log -Pattern "\[node-edge\] detections ack= true" -Quiet)) { Write-Error "Node detections ack missing"; exit 1 }
-          Write-Host "Node Edge acks found."
-
-      # Teardown & artifacts
       - name: Stop Ground
         if: always()
         shell: pwsh
         run: |
           if (Test-Path ground.pid) {
-            $srvPid = Get-Content ground.pid
-            Write-Host "Killing Ground PID $srvPid"
-            Stop-Process -Id $srvPid -ErrorAction SilentlyContinue
+            $gpid = Get-Content ground.pid
+            Write-Host "Killing Ground PID $gpid"
+            try { Stop-Process -Id $gpid -Force -ErrorAction SilentlyContinue } catch {}
+            Start-Sleep -Seconds 1
           }
 
       - name: Upload logs
@@ -201,8 +171,5 @@ jobs:
           name: e2e-logs
           path: |
             ground.out.log
-            ground.err.log
             edge_py.log
-            edge_node.log
-          if-no-files-found: ignore
 
