@@ -35,88 +35,96 @@ jobs:
 
   e2e-smoke:
     needs: proto-build-python
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: windows-latest
+    timeout-minutes: 20
+
     steps:
       - uses: actions/checkout@v4
 
-      # Python runtime for server/client
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install runtime deps
+      # Create venv + install deps
+      - name: Setup venv
         shell: pwsh
         run: |
+          py -m venv .venv
+          .\.venv\Scripts\Activate.ps1
           python -m pip install --upgrade pip
           pip install grpcio grpcio-tools
 
-      # --- Use your PowerShell scripts ---
+      # Generate stubs with your PS script (venv ACTIVATED here)
       - name: Generate Python stubs (PowerShell)
         shell: pwsh
         run: |
-          mkdir -p gen/python
-            --python -m grpc_tools.protoc -I proto `
-            --python_out=gen/python `
-            --grpc_python_out=gen/python `
-            proto/telemetry.proto proto/detections.proto
+          .\.venv\Scripts\Activate.ps1
+          .\scripts\make_proto.ps1
+          Get-ChildItem gen\python | Out-Host
 
+      # Make certs with your PS script (no venv needed, but harmless to activate)
       - name: Make dev certs for mTLS (PowerShell)
         shell: pwsh
-        run: .\scripts\make_certs.ps1
-
-      - name: List generated stubs (debug)
-        run: ls -la gen/python || true
-
-      # --- Launch Ground with TLS ---
-      - name: Launch Ground (bg, TLS)
-        shell: bash
         run: |
-          set -euo pipefail
-          export PYTHONPATH="$(pwd)/gen/python"
-          export TLS=1 CERT_DIR=creds
-          python -u -m ground.server > ground.log 2>&1 &
-          echo $! > ground.pid
-          sleep 2
-          head -n 50 ground.log || true
+          .\.venv\Scripts\Activate.ps1
+          .\scripts\make_certs.ps1
+
+      # Launch Ground (TLS) using venv python (no activation needed since we call the exe)
+      - name: Launch Ground (bg, TLS)
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
+          $env:TLS = "1"; $env:CERT_DIR = "creds"
+          $python = ".\.venv\Scripts\python.exe"
+          $p = Start-Process -FilePath $python `
+                -ArgumentList '-u','-m','ground.server' `
+                -NoNewWindow `
+                -RedirectStandardOutput ground.log `
+                -RedirectStandardError ground.log `
+                -PassThru
+          $p.Id | Out-File ground.pid -Encoding ascii
+          Start-Sleep -Seconds 2
+          Get-Content ground.log -TotalCount 50 -ErrorAction SilentlyContinue | Out-Host
 
       - name: Wait for :50051
-        shell: bash
+        shell: pwsh
         run: |
-          python - <<'PY'
-          import socket,time,sys
-          a=("127.0.0.1",50051)
-          for _ in range(90):
-            try:
-              with socket.create_connection(a, timeout=1.0):
-                print("Ground is up on 127.0.0.1:50051"); sys.exit(0)
-            except OSError: time.sleep(1)
-          print("ERROR: Ground did not start in time", file=sys.stderr)
-          sys.exit(1)
-          PY
+          $deadline = (Get-Date).AddSeconds(90)
+          while ((Get-Date) -lt $deadline) {
+            if (Test-NetConnection -ComputerName 127.0.0.1 -Port 50051 -InformationLevel Quiet) {
+              Write-Host "Ground is up on 127.0.0.1:50051"
+              exit 0
+            }
+            Start-Sleep -Seconds 1
+          }
+          Write-Error "Ground did not start in time"
+          exit 1
 
       - name: Show ground.log on failure
         if: failure()
+        shell: pwsh
         run: |
-          echo "===== ground.log (last 200 lines) ====="
-          tail -n 200 ground.log || true
+          Write-Host "===== ground.log (last 200 lines) ====="
+          Get-Content ground.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
 
-      # --- Python Edge (TLS) ---
+      # Python Edge (TLS) — activate venv, then run
       - name: Run Python Edge (TLS)
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          export PYTHONPATH="$(pwd)/gen/python"
-          export TLS=1 CERT_DIR=creds
-          ( python -u -m edge.client 2>&1 | tee edge_py.log ; test ${PIPESTATUS[0]} -eq 0 )
+          .\.venv\Scripts\Activate.ps1
+          $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
+          $env:TLS = "1"; $env:CERT_DIR = "creds"
+          python -u -m edge.client 2>&1 | Tee-Object -FilePath edge_py.log
+          if ($LASTEXITCODE -ne 0) { Write-Error "Python Edge failed"; exit $LASTEXITCODE }
 
       - name: Verify Python acks
-        shell: bash
+        shell: pwsh
         run: |
-          grep -q "\[edge\] telemetry ack=True" edge_py.log
-          grep -q "\[edge\] detections ack=True" edge_py.log
+          if (-not (Select-String -Path edge_py.log -Pattern "\[edge\] telemetry ack=True" -Quiet)) { Write-Error "Telemetry ack missing"; exit 1 }
+          if (-not (Select-String -Path edge_py.log -Pattern "\[edge\] detections ack=True" -Quiet)) { Write-Error "Detections ack missing"; exit 1 }
+          Write-Host "Python Edge acks found."
 
-      # --- Optional Node Edge (TLS) ---
+      # Optional Node Edge (TLS)
       - uses: actions/setup-node@v4
         if: ${{ hashFiles('edge-node/client.js') != '' }}
         with:
@@ -124,30 +132,35 @@ jobs:
 
       - name: Node install
         if: ${{ hashFiles('edge-node/client.js') != '' }}
+        shell: pwsh
         working-directory: edge-node
         run: npm ci || npm install --no-audit --no-fund
 
       - name: Run Node Edge (TLS)
         if: ${{ hashFiles('edge-node/client.js') != '' }}
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          export TLS=1 CERT_DIR=creds
-          ( node edge-node/client.js 2>&1 | tee edge_node.log ; test ${PIPESTATUS[0]} -eq 0 )
+          $env:TLS = "1"; $env:CERT_DIR = "creds"
+          node edge-node\client.js 2>&1 | Tee-Object -FilePath edge_node.log
+          if ($LASTEXITCODE -ne 0) { Write-Error "Node Edge failed"; exit $LASTEXITCODE }
 
       - name: Verify Node acks
         if: ${{ hashFiles('edge-node/client.js') != '' }}
-        shell: bash
+        shell: pwsh
         run: |
-          grep -q "\[node-edge\] telemetry ack= true" edge_node.log
-          grep -q "\[node-edge\] detections ack= true" edge_node.log
+          if (-not (Select-String -Path edge_node.log -Pattern "\[node-edge\] telemetry ack= true" -Quiet)) { Write-Error "Node telemetry ack missing"; exit 1 }
+          if (-not (Select-String -Path edge_node.log -Pattern "\[node-edge\] detections ack= true" -Quiet)) { Write-Error "Node detections ack missing"; exit 1 }
+          Write-Host "Node Edge acks found."
 
-      # --- Teardown & artifacts ---
       - name: Stop Ground
         if: always()
-        shell: bash
+        shell: pwsh
         run: |
-          if [ -f ground.pid ]; then echo "Killing Ground PID $(cat ground.pid)"; kill $(cat ground.pid) || true; sleep 1; fi
+          if (Test-Path ground.pid) {
+            $pid = Get-Content ground.pid
+            Write-Host "Killing Ground PID $pid"
+            Stop-Process -Id $pid -ErrorAction SilentlyContinue
+          }
 
       - name: Upload logs
         if: always()
@@ -159,4 +172,3 @@ jobs:
             edge_py.log
             edge_node.log
           if-no-files-found: ignore
-
