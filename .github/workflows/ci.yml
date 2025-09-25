@@ -48,15 +48,18 @@ jobs:
       - name: Install runtime deps
         shell: pwsh
         run: |
-          python -m venv .\.venv
-          .\.venv\Scripts\activate
           python -m pip install --upgrade pip
           pip install grpcio grpcio-tools
 
       # --- Use your PowerShell scripts ---
       - name: Generate Python stubs (PowerShell)
         shell: pwsh
-        run: .\scripts\make_proto.ps1
+        run: |
+          mkdir -p gen/python
+          python -m grpc_tools.protoc -I proto \
+            --python_out=gen/python \
+            --grpc_python_out=gen/python \
+            proto/telemetry.proto proto/detections.proto
 
       - name: Make dev certs for mTLS (PowerShell)
         shell: pwsh
