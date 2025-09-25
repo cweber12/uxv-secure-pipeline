@@ -80,7 +80,7 @@ def _load_bytes(p: pathlib.Path) -> bytes:
     return p.read_bytes()
 
 # Start the gRPC server and listen for incoming connections
-async def serve(host: str = "127.0.0.1", port: int = 50051):
+async def serve(host: str = "0.0.0.0", port: int = 50051):
     """
     Start the gRPC server.
     - Insecure by default.
