@@ -46,3 +46,4 @@ Set-Content "$OutDir\client.ext" $clientExt -Encoding ascii
   -sha256 -days $Days -out "$OutDir\client.crt" -extfile "$OutDir\client.ext"
 
 Write-Host "wrote $OutDir\ (ca.crt, server.crt/key, client.crt/key)"
+

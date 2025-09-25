@@ -98,26 +98,20 @@ jobs:
               exit 1
           }
 
-      - name: TLS sanity (OpenSSL)
+      # Wait for port (plain TCP), then mTLS probe
+      - name: Wait for Ground TCP :50051
         shell: pwsh
         run: |
-          # Make Git-for-Windows OpenSSL available on PATH
-          $env:Path += ';C:\Program Files\Git\usr\bin'
+          .\.venv\Scripts\Activate.ps1
+          $deadline = (Get-Date).AddSeconds(30)
+          while ((Get-Date) -lt $deadline) {
+            if (Test-NetConnection -ComputerName 127.0.0.1 -Port 50051 -InformationLevel Quiet) {
+              Write-Host "TCP open"; exit 0
+            }
+            Start-Sleep -Seconds 1
+          }
+          throw "Ground TCP not open in time"
 
-          # Send an empty line to s_client via PowerShell (not bash)
-          $sslOut = "" | & openssl s_client `
-            -connect 127.0.0.1:50051 `
-            -servername localhost `
-            -CAfile creds\ca.crt `
-            -cert creds\client.crt `
-            -key creds\client.key `
-            -alpn h2 2>&1
-
-          $sslOut | Out-Host
-          if ($LASTEXITCODE -ne 0) { throw "openssl exited with code $LASTEXITCODE" }
-          # Optional: assert h2 ALPN
-          if ($sslOut -notmatch "ALPN protocol:\s*h2") { throw "ALPN h2 not negotiated" }
-      
       - name: Wait for Ground via gRPC (mTLS)
         shell: pwsh
         run: |

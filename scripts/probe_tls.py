@@ -1,4 +1,4 @@
-# scripts/probe_tls.py  (sync version)
+# scripts/probe_tls.py
 from __future__ import annotations
 import argparse, os, sys, pathlib
 from time import monotonic
@@ -26,7 +26,6 @@ def make_channel(addr: str, cert_dir: pathlib.Path, override: str, insecure: boo
         private_key=_b(cert_dir/"client.key"),
         certificate_chain=_b(cert_dir/"client.crt"),
     )
-    # Add BOTH override + default_authority to satisfy name checks and :authority on Windows
     opts = [
         ("grpc.ssl_target_name_override", override),
         ("grpc.default_authority", override),
@@ -49,3 +48,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
