@@ -90,14 +90,14 @@ jobs:
           Get-Content ground.out.log -TotalCount 50 -ErrorAction SilentlyContinue | Out-Host
           Get-Content ground.err.log -TotalCount 50 -ErrorAction SilentlyContinue | Out-Host
 
-      # Wait for TCP port; if it fails, we will see the Python traceback from the new bind-check above
+      # Wait for TCP port; if it fails, see the Python traceback from the new bind-check above
       - name: Wait for :50051
         shell: pwsh
         run: |
-          $deadline = (Get-Date).AddSeconds(120)
+          $deadline = (Get-Date).AddSeconds(60)
           while ((Get-Date) -lt $deadline) {
             if ((Test-NetConnection -ComputerName 127.0.0.1 -Port 50051 -InformationLevel Quiet) -or `
-                (Test-NetConnection -ComputerName localhost -Port 50051 -InformationLevel Quiet)) {
+                (Test-NetConnection -ComputerName 0.0.0.0 -Port 50051 -InformationLevel Quiet)) {
               Write-Host "Ground is up on :50051"
               exit 0
             }
