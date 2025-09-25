@@ -96,29 +96,30 @@ async def serve(host: str | None = None, port: int | None = None):
     addr = f"{host}:{port}"
 
     # Toggle TLS via environment
-    use_tls = os.getenv("TLS", "0") == "1"
+    #use_tls = os.getenv("TLS", "0") == "1"
     cert_dir = pathlib.Path(os.getenv("CERT_DIR", "creds"))
 
-    if use_tls:
-        # mTLS: server presents cert; client cert is required & verified against CA
-        server_key = _load_bytes(cert_dir / "server.key")
-        server_crt = _load_bytes(cert_dir / "server.crt")
-        ca_crt     = _load_bytes(cert_dir / "ca.crt")
+    #if use_tls:
+    # mTLS: server presents cert; client cert is required & verified against CA
+    server_key = _load_bytes(cert_dir / "server.key")
+    server_crt = _load_bytes(cert_dir / "server.crt")
+    ca_crt     = _load_bytes(cert_dir / "ca.crt")
 
-        credentials = grpc.ssl_server_credentials(
-            [(server_key, server_crt)],
-            root_certificates=ca_crt,
-            require_client_auth=True,
-        )
-        bound = server.add_secure_port(addr, credentials)
-        if bound == 0:
-            raise RuntimeError(f"Failed to bind secure gRPC port on {addr} (check certs under {cert_dir})")
-        print(f"[ground] TLS on @ {addr} (bound={bound})")
-    else:
-        bound = server.add_insecure_port(addr)
-        if bound == 0:
-            raise RuntimeError(f"Failed to bind insecure gRPC port on {addr}")
-        print(f"[ground] listening on {addr} (bound={bound})")
+    credentials = grpc.ssl_server_credentials(
+        [(server_key, server_crt)],
+        root_certificates=ca_crt,
+        require_client_auth=True,
+    )
+    bound = server.add_secure_port(addr, credentials)
+    if bound == 0:
+        raise RuntimeError(f"Failed to bind secure gRPC port on {addr} (check certs under {cert_dir})")
+    print(f"[ground] TLS on @ {addr} (bound={bound})")
+    
+    #else:
+        #bound = server.add_insecure_port(addr)
+        #if bound == 0:
+            #raise RuntimeError(f"Failed to bind insecure gRPC port on {addr}")
+        #print(f"[ground] listening on {addr} (bound={bound})")
 
     await server.start()
     print("[ground] server started")
