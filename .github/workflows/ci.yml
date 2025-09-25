@@ -56,9 +56,9 @@ jobs:
         shell: pwsh
         run: |
           mkdir -p gen/python
-          python -m grpc_tools.protoc -I proto \
-            --python_out=gen/python \
-            --grpc_python_out=gen/python \
+            --python -m grpc_tools.protoc -I proto `
+            --python_out=gen/python `
+            --grpc_python_out=gen/python `
             proto/telemetry.proto proto/detections.proto
 
       - name: Make dev certs for mTLS (PowerShell)
