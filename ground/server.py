@@ -10,7 +10,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "gen" / "py
 import telemetry_pb2, telemetry_pb2_grpc
 import detections_pb2, detections_pb2_grpc
 
-from recorder import JsonlRecorder
+from .recorder import JsonlRecorder
 
 import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
