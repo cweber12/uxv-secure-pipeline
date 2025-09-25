@@ -98,18 +98,18 @@ jobs:
               exit 1
           }
 
-      - name: Wait for Ground via gRPC (mTLS)
-        shell: pwsh
-        run: |
-          .\.venv\Scripts\Activate.ps1
-          python .\scripts\probe_tls.py --addr 127.0.0.1:50051 --override-host localhost --timeout 30
-
       - name: TLS sanity (openssl)
         shell: pwsh
         run: |
           $env:Path += ';C:\Program Files\Git\usr\bin'
           echo | openssl s_client -connect 127.0.0.1:50051 -servername localhost `
             -CAfile creds\ca.crt -cert creds\client.crt -key creds\client.key -alpn h2 | findstr /R /C:"Verify return code: 0" /C:"ALPN protocol: h2"
+      
+      - name: Wait for Ground via gRPC (mTLS)
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\Activate.ps1
+          python .\scripts\probe_tls.py --addr 127.0.0.1:50051 --override-host localhost --timeout 30
 
       - name: Show Ground logs on failure
         if: failure()
