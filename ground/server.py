@@ -75,7 +75,7 @@ class DetectionIngestService(detections_pb2_grpc.DetectionIngestServicer):
 # -----------------------------------------------------------------------
 
 # Start the gRPC server and listen for incoming connections
-async def serve(host: str = "0.0.0.0", port: int = 50051):
+async def serve(host: str = "127.0.0.1", port: int = 50051):
     recorder = JsonlRecorder(root=pathlib.Path("missions"))
     server = grpc.aio.server(options=[
         # Increase max message size to 20 MiB
