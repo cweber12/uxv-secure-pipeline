@@ -9,6 +9,7 @@ import sys
 import pathlib
 from time import monotonic
 import traceback
+import asyncio
 
 # Add generated protobuf stubs to path
 gen_python = pathlib.Path(__file__).parent.parent / "gen" / "python"
@@ -75,7 +76,7 @@ def parse_args() -> argparse.Namespace:
 def make_channel(addr: str, cert_dir: pathlib.Path, override_host: str, insecure: bool):
     if insecure:
         print(f"[probe] Creating insecure channel to {addr}")
-        return grpc.insecure_channel(addr), "insecure"
+        return grpc.aio.insecure_channel(addr), "insecure"
 
     print(f"[probe] Creating secure channel to {addr}")
     print(f"[probe] Certificate directory: {cert_dir.resolve()}")
@@ -116,7 +117,7 @@ def make_channel(addr: str, cert_dir: pathlib.Path, override_host: str, insecure
         print(f"[probe] Added SSL target name override: {override_host}")
 
     try:
-        channel = grpc.secure_channel(addr, creds, options=options)
+        channel = grpc.aio.secure_channel(addr, creds, options=options)
         print(f"[probe] Secure channel created")
         return channel, "mtls"
     except Exception as e:
@@ -124,7 +125,29 @@ def make_channel(addr: str, cert_dir: pathlib.Path, override_host: str, insecure
         raise
 
 
-def main() -> int:
+async def test_channel_async(ch, mode: str, timeout: float, addr: str):
+    """Test channel readiness using async gRPC"""
+    try:
+        print(f"[probe] Waiting for channel ready (timeout: {timeout:.1f}s)...")
+        await asyncio.wait_for(ch.channel_ready(), timeout=timeout)
+        print(f"[probe] SUCCESS: gRPC channel READY ({mode}) to {addr}")
+        return 0
+    except asyncio.TimeoutError:
+        print(f"[probe] ERROR: Timeout waiting for channel to become ready after {timeout}s")
+        return 1
+    except Exception as e:
+        print(f"[probe] ERROR: Channel readiness check failed ({mode}) to {addr}: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        return 1
+    finally:
+        try:
+            await ch.close()
+            print(f"[probe] Channel closed")
+        except Exception:
+            pass
+
+
+async def main_async() -> int:
     try:
         args = parse_args()
         print(f"[probe] Starting probe with args: addr={args.addr}, cert_dir={args.cert_dir}, timeout={args.timeout}")
@@ -142,47 +165,16 @@ def main() -> int:
             return 2
 
         print(f"[probe] Testing channel readiness with timeout {args.timeout}s...")
-        deadline = monotonic() + max(1.0, args.timeout)
-        
-        try:
-            timeout_remaining = max(1.0, deadline - monotonic())
-            print(f"[probe] Waiting for channel ready (timeout: {timeout_remaining:.1f}s)...")
-            grpc.channel_ready_future(ch).result(timeout=timeout_remaining)
-            print(f"[probe] SUCCESS: gRPC channel READY ({mode}) to {args.addr}")
-            return 0
-        except grpc.FutureTimeoutError:
-            print(f"[probe] ERROR: Timeout waiting for channel to become ready after {args.timeout}s")
-            return 1
-        except Exception as e:
-            print(f"[probe] ERROR: Channel readiness check failed ({mode}) to {args.addr}: {type(e).__name__}: {e}")
-            traceback.print_exc()
-            
-            # Helpful hints for common pitfalls
-            if not args.insecure and ("hostname" in str(e).lower() or "handshake" in str(e).lower() or "certificate" in str(e).lower()):
-                print(
-                    "[probe] HINT: TLS/certificate issue detected. Common fixes:",
-                )
-                print(
-                    "  - If server cert CN is 'localhost' but you're dialing an IP, try --addr localhost:50051",
-                )
-                print(
-                    "  - Check that certificate files exist and are readable",
-                )
-                print(
-                    "  - Verify server is actually running with TLS enabled",
-                )
-            return 1
-        finally:
-            try:
-                ch.close()
-                print(f"[probe] Channel closed")
-            except:
-                pass
+        return await test_channel_async(ch, mode, args.timeout, args.addr)
 
     except Exception as e:
         print(f"[probe] FATAL ERROR: {type(e).__name__}: {e}")
         traceback.print_exc()
         return 2
+
+
+def main() -> int:
+    return asyncio.run(main_async())
 
 
 if __name__ == "__main__":

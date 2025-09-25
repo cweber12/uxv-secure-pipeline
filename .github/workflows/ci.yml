@@ -71,7 +71,7 @@ jobs:
           .\scripts\make_certs.ps1
           Get-ChildItem creds | Out-Host
 
-            # Launch Ground (TLS) in background with explicit WorkingDirectory
+      # Launch Ground (TLS) in background with explicit WorkingDirectory
       - name: Launch Ground (bg, TLS)
         shell: pwsh
         run: |
@@ -118,9 +118,9 @@ jobs:
           netstat -ano | Select-String -Pattern ":50051" | Out-Host
           Write-Host "===== Ground process status ====="
           if (Test-Path ground.pid) {
-              $pid = Get-Content ground.pid
-              Write-Host "Ground PID: $pid"
-              Get-Process -Id $pid -ErrorAction SilentlyContinue | Out-Host
+              $groundPid = Get-Content ground.pid
+              Write-Host "Ground PID: $groundPid"
+              Get-Process -Id $groundPid -ErrorAction SilentlyContinue | Out-Host
           }
 
       # Python Edge (TLS)
@@ -192,3 +192,4 @@ jobs:
             edge_py.log
             edge_node.log
           if-no-files-found: ignore
+
