@@ -9,13 +9,19 @@ import hashlib
 from typing import Tuple
 from google.protobuf.json_format import MessageToDict
 
+
 # Make generated stubs importable (expects stubs in gen/python/)
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "gen" / "python"))
 
 import telemetry_pb2, telemetry_pb2_grpc
 import detections_pb2, detections_pb2_grpc
 
-from recorder import JsonlRecorder  # package import (ground/__init__.py present)
+try:
+    # When run as a module: python -m ground.server
+    from .recorder import JsonlRecorder
+except ImportError:
+    # Fallback if someone runs `python ground/server.py` directly 
+    from ground.recorder import JsonlRecorder
 
 # ---------------------------- helpers ----------------------------
 
