@@ -99,7 +99,11 @@ jobs:
           import sys, pathlib, grpc
           from time import monotonic, sleep
 
-          # Add retry logic for server startup
+          # generated stubs to Python path
+          gen_python = pathlib.Path("gen/python").resolve()
+          sys.path.insert(0, str(gen_python))
+
+          # retry logic for server startup
           max_retries = 30
           retry_delay = 2.0
 
@@ -117,6 +121,7 @@ jobs:
                   private_key=read("client.key"),
                   certificate_chain=read("client.crt"),
               )
+              print("Certificates loaded successfully")
           except Exception as e:
               print(f"Failed to load certificates: {e}")
               sys.exit(2)
@@ -127,20 +132,27 @@ jobs:
           for attempt in range(max_retries):
               try:
                   print(f"Attempt {attempt + 1}/{max_retries}: Checking gRPC channel...")
-                  grpc.channel_ready_future(ch).result(timeout=5.0)
+                  future = grpc.channel_ready_future(ch)
+                  future.result(timeout=5.0)
                   print("gRPC channel ready")
                   ch.close()
                   sys.exit(0)
+              except grpc.FutureTimeoutError as e:
+                  print(f"Attempt {attempt + 1} failed: Timeout waiting for channel ready")
               except Exception as e:
-                  print(f"Attempt {attempt + 1} failed: {e}")
-                  if attempt < max_retries - 1:
-                      sleep(retry_delay)
-                  else:
-                      print("All attempts failed")
-                      ch.close()
-                      sys.exit(1)
+                  print(f"Attempt {attempt + 1} failed: {type(e).__name__}: {e}")
+              
+              if attempt < max_retries - 1:
+                  sleep(retry_delay)
+              else:
+                  print("All attempts failed")
+                  ch.close()
+                  sys.exit(1)
           '@
           Set-Content -Path $probePath -Value $probe -Encoding UTF8
+          
+          # Set PYTHONPATH for the probe script
+          $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
           python $probePath
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }    
 
