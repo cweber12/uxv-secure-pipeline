@@ -71,7 +71,7 @@ jobs:
           .\scripts\make_certs.ps1
           Get-ChildItem creds | Out-Host
 
-      # Launch Ground (TLS) in background with explicit WorkingDirectory
+            # Launch Ground (TLS) in background with explicit WorkingDirectory
       - name: Launch Ground (bg, TLS)
         shell: pwsh
         run: |
@@ -86,17 +86,25 @@ jobs:
                 -WorkingDirectory (Get-Location) `
                 -PassThru
           $p.Id | Out-File ground.pid -Encoding ascii
-          Start-Sleep -Seconds 2
+          Start-Sleep -Seconds 5
           Get-Content ground.out.log -TotalCount 50 -ErrorAction SilentlyContinue | Out-Host
           Get-Content ground.err.log -TotalCount 50 -ErrorAction SilentlyContinue | Out-Host
+          
+          # Check if process is still running
+          if (-not (Get-Process -Id $p.Id -ErrorAction SilentlyContinue)) {
+              Write-Error "Ground server process died during startup"
+              Get-Content ground.out.log -ErrorAction SilentlyContinue | Out-Host
+              Get-Content ground.err.log -ErrorAction SilentlyContinue | Out-Host
+              exit 1
+          }
 
       - name: Wait for Ground via gRPC (mTLS)
         shell: pwsh
         run: |
           .\.venv\Scripts\Activate.ps1
           $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
-          python scripts\probe_tls.py --addr 127.0.0.1:50051 --cert-dir creds --override-host localhost --timeout 60
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }    
+          python scripts\probe_tls.py --addr 127.0.0.1:50051 --cert-dir creds --override-host localhost --timeout 30
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Show Ground logs on failure
         if: failure()
@@ -108,6 +116,12 @@ jobs:
           Get-Content ground.err.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
           Write-Host "===== netstat :50051 ====="
           netstat -ano | Select-String -Pattern ":50051" | Out-Host
+          Write-Host "===== Ground process status ====="
+          if (Test-Path ground.pid) {
+              $pid = Get-Content ground.pid
+              Write-Host "Ground PID: $pid"
+              Get-Process -Id $pid -ErrorAction SilentlyContinue | Out-Host
+          }
 
       # Python Edge (TLS)
       - name: Run Python Edge (TLS)
