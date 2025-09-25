@@ -7,6 +7,7 @@ import asyncio
 import pathlib
 import hashlib
 from typing import Tuple
+from google.protobuf.json_format import MessageToDict
 
 # Make generated stubs importable (expects stubs in gen/python/)
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "gen" / "python"))
@@ -82,34 +83,43 @@ def _server_credentials(cert_dir: pathlib.Path, require_client_auth: bool = True
 
 # ------------------------ gRPC services -------------------------
 
+# TelemetryIngest service implementation
 class TelemetryIngestService(telemetry_pb2_grpc.TelemetryIngestServicer):
-    def __init__(self, recorder: JsonlRecorder | None = None):
+    def __init__(self, recorder: JsonlRecorder):
         self.recorder = recorder
 
     async def StreamTelemetry(self, request_iterator, context):
+        """
+        Receives a stream of Telemetry messages, logs a summary line,
+        and persists each one as a JSON object to missions/<id>/telemetry.jsonl.
+        """
         count = 0
         async for msg in request_iterator:
             count += 1
             print(f"[telemetry] #{count} lat={msg.lat:.5f} lon={msg.lon:.5f} alt={msg.alt_m:.1f} ts={msg.ts_ns}")
-            if self.recorder:
-                self.recorder.write("telemetry", msg)
+            # Convert protobuf -> dict for JSON serialization
+            obj = MessageToDict(msg, preserving_proto_field_name=True)
+            self.recorder.write("telemetry", obj)
         print(f"[telemetry] stream closed, total={count}")
-        return telemetry_pb2.TelemetryAck(ok=True)
+        return telemetry_pb2.TelemetryAck(ok=True)  
 
-
+# DetectionIngest service implementation
 class DetectionIngestService(detections_pb2_grpc.DetectionIngestServicer):
-    def __init__(self, recorder: JsonlRecorder | None = None):
+    def __init__(self, recorder: JsonlRecorder):
         self.recorder = recorder
 
     async def StreamDetections(self, request_iterator, context):
+        """
+        Receives a stream of Detection messages and writes them to missions/<id>/detections.jsonl.
+        """
         count = 0
         async for d in request_iterator:
             count += 1
             bb = d.bbox
             print(f"[detection] #{count} {d.cls} conf={d.confidence:.2f} "
                   f"bbox=({bb.x:.1f},{bb.y:.1f},{bb.w:.1f},{bb.h:.1f}) ts={d.ts_ns}")
-            if self.recorder:
-                self.recorder.write("detection", d)
+            obj = MessageToDict(d, preserving_proto_field_name=True)
+            self.recorder.write("detections", obj)
         print(f"[detection] stream closed, total={count}")
         return detections_pb2.DetectionAck(ok=True)
 
