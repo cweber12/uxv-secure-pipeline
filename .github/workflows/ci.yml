@@ -99,6 +99,9 @@ jobs:
           import sys, pathlib, grpc
           from time import monotonic
 
+          max_retries = 30
+          retry_delay = 2.0
+
           CERT_DIR = pathlib.Path("creds")
           def read(name: str) -> bytes:
               return (CERT_DIR / name).read_bytes()
