@@ -9,6 +9,10 @@ import hashlib
 from typing import Tuple
 from google.protobuf.json_format import MessageToDict
 
+# Ensure repo root on sys.path so package imports work in both "python -m" and direct execution
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 # Make generated stubs importable (expects stubs in gen/python/)
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "gen" / "python"))
@@ -16,12 +20,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "gen" / "py
 import telemetry_pb2, telemetry_pb2_grpc
 import detections_pb2, detections_pb2_grpc
 
-try:
-    # When run as a module: python -m ground.server
-    from .recorder import JsonlRecorder
-except ImportError:
-    # Fallback if someone runs `python ground/server.py` directly 
-    from ground.recorder import JsonlRecorder
+from ground.recorder import JsonlRecorder
 
 # ---------------------------- helpers ----------------------------
 

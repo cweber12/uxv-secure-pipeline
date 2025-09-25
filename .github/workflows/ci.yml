@@ -66,73 +66,50 @@ jobs:
           .\scripts\make_certs.ps1
           Get-ChildItem creds
 
+      # Launch Ground (background), log to files, and record PID
       - name: Launch Ground (bg)
         shell: pwsh
         run: |
           .\.venv\Scripts\Activate.ps1
           $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
-          # Enable mTLS
           $env:TLS = '1'
           $env:CERT_DIR = 'creds'
 
-          # Clean old logs/PID
-          Remove-Item -ErrorAction SilentlyContinue ground.out.log, ground.err.log, ground.pid
-
-          # Start server in background, capture PID
+          $args = @('-u','-m','ground.server')
           $proc = Start-Process -FilePath python `
-                                -ArgumentList @('-u','-m','ground.server') `
+                                -ArgumentList $args `
+                                -WorkingDirectory (Get-Location) `
+                                -NoNewWindow `
                                 -RedirectStandardOutput 'ground.out.log' `
                                 -RedirectStandardError  'ground.err.log' `
-                                -NoNewWindow -PassThru
-          $proc.Id | Out-File -FilePath ground.pid -Encoding ascii -NoNewline
-
-          Start-Sleep -Seconds 2
+                                -PassThru
+          $proc.Id | Out-File -FilePath ground.pid -Encoding ascii
+          Start-Sleep -Seconds 1
           Write-Host "===== ground.out.log (head) ====="
-          Get-Content ground.out.log -TotalCount 50 -ErrorAction SilentlyContinue | Write-Host
+          Get-Content ground.out.log -TotalCount 50 -ErrorAction SilentlyContinue
 
-
-      - name: Wait for Ground TCP :50051
+      # Wait until gRPC mTLS is actually reachable (use your probe)
+      - name: Wait for Ground via gRPC (mTLS)
         shell: pwsh
         run: |
           .\.venv\Scripts\Activate.ps1
-          $deadline = (Get-Date).AddSeconds(30)
-          $ok = $false
-          while ((Get-Date) -lt $deadline) {
-            if (Test-NetConnection -ComputerName '127.0.0.1' -Port 50051 -InformationLevel Quiet) {
-              $ok = $true
-              Write-Host "TCP open on 127.0.0.1:50051"
-              break
-            }
+          $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
+          $env:CERT_DIR   = 'creds'
+          $env:ADDR       = '127.0.0.1:50051'
+          $env:SNI        = 'localhost'
+          $deadline = (Get-Date).AddSeconds(45)
+          do {
+            $env:PROBE_TIMEOUT = '5'
+            python -u .\scripts\probe_tls.py
+            if ($LASTEXITCODE -eq 0) { exit 0 }
             Start-Sleep -Seconds 1
-          }
-          if (-not $ok) {
-            Write-Host "===== ground.out.log (tail) ====="
-            Get-Content ground.out.log -Tail 200 -ErrorAction SilentlyContinue | Write-Host
-            Write-Host "===== ground.err.log (tail) ====="
-            Get-Content ground.err.log -Tail 200 -ErrorAction SilentlyContinue | Write-Host
-            throw "Ground TCP not open in time"
-          }
+          } while ((Get-Date) -lt $deadline)
 
-
-      - name: OpenSSL sanity (client-auth handshake)
-        shell: pwsh
-        run: |
-          # Ensure Git for Windows OpenSSL is available
-          $gitUsrBin = 'C:\Program Files\Git\usr\bin'
-          if (Test-Path $gitUsrBin) { $env:Path += ";$gitUsrBin" }
-          $cmd = 'type NUL | openssl s_client -connect 127.0.0.1:50051 -servername localhost -cert creds\client.crt -key creds\client.key -CAfile creds\ca.crt -verify_return_error -brief -quiet'
-          cmd /c $cmd
-          if ($LASTEXITCODE -ne 0) { throw "openssl s_client failed with code $LASTEXITCODE" }
-
-      - name: Wait for Ground via gRPC (mTLS probe)
-        shell: pwsh
-        env:
-          CERT_DIR: "creds"
-          PROBE_TIMEOUT: "30"
-          SNI: "localhost"
-        run: |
-          .\.venv\Scripts\Activate.ps1
-          python -u scripts\probe_tls.py
+          Write-Host "===== ground.out.log (tail) ====="
+          Get-Content ground.out.log -Tail 200 -ErrorAction SilentlyContinue
+          Write-Host "===== ground.err.log (tail) ====="
+          Get-Content ground.err.log -Tail 200 -ErrorAction SilentlyContinue
+          throw "Ground did not become READY over mTLS in time"
 
       - name: Run Python Edge (mTLS)
         shell: pwsh
@@ -159,18 +136,16 @@ jobs:
           Get-Content ground.out.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
           Write-Host "===== edge_py.log (last 200) ====="
           Get-Content edge_py.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
-
+      
+      # Teardown
       - name: Stop Ground
         if: always()
         shell: pwsh
         run: |
           if (Test-Path ground.pid) {
-            $groundPid = (Get-Content ground.pid | Select-Object -First 1)
-            Write-Host "Killing Ground PID $groundPid"
-            try { Stop-Process -Id $groundPid -Force -ErrorAction Stop }
-            catch { Write-Host "Stop-Process failed: $_" }
-          } else {
-            Write-Host "No ground.pid found"
+            $gp = Get-Content ground.pid
+            Write-Host "Stopping Ground PID $gp"
+            Stop-Process -Id $gp -Force -ErrorAction SilentlyContinue
           }
 
       - name: Upload logs
