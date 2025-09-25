@@ -90,21 +90,35 @@ jobs:
           Get-Content ground.out.log -TotalCount 50 -ErrorAction SilentlyContinue | Out-Host
           Get-Content ground.err.log -TotalCount 50 -ErrorAction SilentlyContinue | Out-Host
 
-      # Wait for TCP port; if it fails, see the Python traceback from the new bind-check above
-      - name: Wait for :50051
+      - name: Wait for Ground via gRPC (mTLS)
         shell: pwsh
         run: |
-          $deadline = (Get-Date).AddSeconds(60)
-          while ((Get-Date) -lt $deadline) {
-            if ((Test-NetConnection -ComputerName 127.0.0.1 -Port 50051 -InformationLevel Quiet) -or `
-                (Test-NetConnection -ComputerName 0.0.0.0 -Port 50051 -InformationLevel Quiet)) {
-              Write-Host "Ground is up on :50051"
-              exit 0
-            }
-            Start-Sleep -Seconds 1
-          }
-          Write-Error "Ground did not start in time"
-          exit 1
+          .\.venv\Scripts\Activate.ps1
+          $code = @'
+          import os, sys, pathlib, grpc
+          from time import monotonic
+
+          CERT_DIR = pathlib.Path("creds")
+          def read(p: str) -> bytes: return (CERT_DIR/p).read_bytes()
+
+          creds = grpc.ssl_channel_credentials(
+              root_certificates=read("ca.crt"),
+              private_key=read("client.key"),
+              certificate_chain=read("client.crt"),
+          )
+          ch = grpc.secure_channel("127.0.0.1:50051", creds)
+          deadline = monotonic() + 60.0
+          try:
+              grpc.channel_ready_future(ch).result(timeout=max(1.0, deadline - monotonic()))
+              print("gRPC channel ready")
+              sys.exit(0)
+          except Exception as e:
+              print("Channel NOT ready:", e)
+              sys.exit(1)
+          '@
+          python - <<PY
+          $code
+          PY
 
       - name: Show Ground logs on failure
         if: failure()
