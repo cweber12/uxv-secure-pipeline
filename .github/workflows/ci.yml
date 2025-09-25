@@ -66,46 +66,53 @@ jobs:
           .\scripts\make_certs.ps1
           Get-ChildItem creds
 
-      - name: Launch Ground (mTLS)
+      - name: Launch Ground (bg)
         shell: pwsh
-        env:
-          TLS: "1"
-          CERT_DIR: "creds"
-          GRPC_VERBOSITY: "DEBUG"
-          GRPC_TRACE: "handshaker,security_handshaker,secure_endpoint,tcp"
         run: |
           .\.venv\Scripts\Activate.ps1
           $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
-          $psi = New-Object System.Diagnostics.ProcessStartInfo
-          $psi.FileName = (Join-Path (Get-Location) ".venv\Scripts\python.exe")
-          $psi.ArgumentList = @("-u","-m","ground.server")
-          $psi.UseShellExecute = $false
-          $psi.RedirectStandardOutput = $true
-          $psi.RedirectStandardError  = $true
-          $p = [System.Diagnostics.Process]::Start($psi)
-          Set-Content -Path ground.pid -Value $p.Id
-          $p.StandardOutput.ReadLine() | Tee-Object -FilePath ground.out.log
-          Start-Sleep -Seconds 1
-          Get-Content ground.out.log -Tail 50 -ErrorAction SilentlyContinue | Out-Host
+          # Enable mTLS
+          $env:TLS = '1'
+          $env:CERT_DIR = 'creds'
+
+          # Clean old logs/PID
+          Remove-Item -ErrorAction SilentlyContinue ground.out.log, ground.err.log, ground.pid
+
+          # Start server in background, capture PID
+          $proc = Start-Process -FilePath python `
+                                -ArgumentList @('-u','-m','ground.server') `
+                                -RedirectStandardOutput 'ground.out.log' `
+                                -RedirectStandardError  'ground.err.log' `
+                                -NoNewWindow -PassThru
+          $proc.Id | Out-File -FilePath ground.pid -Encoding ascii -NoNewline
+
+          Start-Sleep -Seconds 2
+          Write-Host "===== ground.out.log (head) ====="
+          Get-Content ground.out.log -TotalCount 50 -ErrorAction SilentlyContinue | Write-Host
+
 
       - name: Wait for Ground TCP :50051
         shell: pwsh
         run: |
-          $deadline = (Get-Date).AddSeconds(60)
+          .\.venv\Scripts\Activate.ps1
+          $deadline = (Get-Date).AddSeconds(30)
+          $ok = $false
           while ((Get-Date) -lt $deadline) {
-            try {
-              $c = New-Object System.Net.Sockets.TcpClient
-              $iar = $c.BeginConnect('127.0.0.1', 50051, $null, $null)
-              if ($iar.AsyncWaitHandle.WaitOne(1000) -and $c.Connected) {
-                $c.Close()
-                Write-Host "TCP open"
-                exit 0
-              }
-              $c.Close()
-            } catch {}
-            Start-Sleep -Milliseconds 500
+            if (Test-NetConnection -ComputerName '127.0.0.1' -Port 50051 -InformationLevel Quiet) {
+              $ok = $true
+              Write-Host "TCP open on 127.0.0.1:50051"
+              break
+            }
+            Start-Sleep -Seconds 1
           }
-          throw "Ground TCP not open in time"
+          if (-not $ok) {
+            Write-Host "===== ground.out.log (tail) ====="
+            Get-Content ground.out.log -Tail 200 -ErrorAction SilentlyContinue | Write-Host
+            Write-Host "===== ground.err.log (tail) ====="
+            Get-Content ground.err.log -Tail 200 -ErrorAction SilentlyContinue | Write-Host
+            throw "Ground TCP not open in time"
+          }
+
 
       - name: OpenSSL sanity (client-auth handshake)
         shell: pwsh
@@ -158,10 +165,12 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path ground.pid) {
-            $gpid = Get-Content ground.pid
-            Write-Host "Killing Ground PID $gpid"
-            try { Stop-Process -Id $gpid -Force -ErrorAction SilentlyContinue } catch {}
-            Start-Sleep -Seconds 1
+            $groundPid = (Get-Content ground.pid | Select-Object -First 1)
+            Write-Host "Killing Ground PID $groundPid"
+            try { Stop-Process -Id $groundPid -Force -ErrorAction Stop }
+            catch { Write-Host "Stop-Process failed: $_" }
+          } else {
+            Write-Host "No ground.pid found"
           }
 
       - name: Upload logs
