@@ -66,48 +66,74 @@ jobs:
           .\scripts\make_certs.ps1
           Get-ChildItem creds
 
-      # Launch Ground (background), log to files, and record PID
+      # Launch Ground (bg) with mTLS and real log files
       - name: Launch Ground (bg)
         shell: pwsh
         run: |
           .\.venv\Scripts\Activate.ps1
+
+          # mTLS env
           $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
           $env:TLS = "1"
           $env:CERT_DIR = (Join-Path (Get-Location) 'creds')
-          # gRPC debug on server
+          $env:HOST = "127.0.0.1"
+          $env:PORT = "50051"
+
+          # Optional: turn on gRPC debug on the server
           $env:GRPC_VERBOSITY = "DEBUG"
-          $env:GRPC_TRACE = "handshaker,security_handshaker,tcp,http"
+          $env:GRPC_TRACE = "handshaker,security_handshaker,tcp"
 
-          $psi = New-Object System.Diagnostics.ProcessStartInfo
-          $psi.FileName = (Get-Command python).Path
-          $psi.Arguments = "-u -m ground.server"
-          $psi.WorkingDirectory = (Get-Location).Path
-          $psi.UseShellExecute = $false
-          $psi.RedirectStandardOutput = $true
-          $psi.RedirectStandardError  = $true
+          # clean logs
+          Remove-Item ground.out.log, ground.err.log, ground.pid -ErrorAction SilentlyContinue
 
-          $p = [System.Diagnostics.Process]::Start($psi)
-          $p.BeginOutputReadLine()
-          $p.BeginErrorReadLine()
-          $p.Id | Out-File -Encoding ascii ground.pid
+          $py = Join-Path (Get-Location) '.venv\Scripts\python.exe'
+          $args = @('-u','-m','ground.server')
 
-          Start-Sleep -Seconds 10
-          if (Test-Path ground.out.log) { Get-Content ground.out.log -Tail 50 -ErrorAction SilentlyContinue | Write-Host }
+          $p = Start-Process -FilePath $py -ArgumentList $args `
+              -RedirectStandardOutput (Join-Path (Get-Location) 'ground.out.log') `
+              -RedirectStandardError  (Join-Path (Get-Location) 'ground.err.log') `
+              -NoNewWindow -PassThru
+
+          $p.Id | Out-File -FilePath ground.pid -Encoding ascii -NoNewline
+
+          Start-Sleep -Seconds 2
+          Write-Host "Ground PID: $($p.Id)"
+          # show something immediately if available
+          Get-Content ground.out.log -Tail 50 -ErrorAction SilentlyContinue | Write-Host
 
 
-      # Wait until gRPC mTLS is actually reachable (use your probe)
+      # Quick TCP check so we know the process is listening
+      - name: Wait for Ground TCP :50051
+        shell: pwsh
+        run: |
+          $deadline = (Get-Date).AddSeconds(30)
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $c = New-Object System.Net.Sockets.TcpClient
+              $ar = $c.BeginConnect('127.0.0.1',50051,$null,$null)
+              if ($ar.AsyncWaitHandle.WaitOne(1000) -and $c.Connected) { $c.Close(); Write-Host "TCP open"; exit 0 }
+              $c.Close()
+            } catch { }
+            Start-Sleep -Seconds 1
+          }
+          Write-Host "===== ground.out.log (tail) ====="; Get-Content ground.out.log -Tail 200 -ErrorAction SilentlyContinue
+          Write-Host "===== ground.err.log (tail) ====="; Get-Content ground.err.log -Tail 200 -ErrorAction SilentlyContinue
+          throw "Ground TCP not open in time"
+
+      # Strong mTLS readiness gate using the same code you tested locally
       - name: Wait for Ground via gRPC (mTLS)
         shell: pwsh
         run: |
           .\.venv\Scripts\Activate.ps1
-          python -u scripts\probe_tls.py --addr 127.0.0.1:50051 --cert-dir $certDir --timeout 10
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "===== ground.out.log (tail) ====="
-            Get-Content ground.out.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
-            Write-Host "===== ground.err.log (tail) ====="
-            Get-Content ground.err.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
+          $certDir = (Join-Path (Get-Location) 'creds')
+          try {
+            python .\scripts\probe_tls.py --addr "127.0.0.1:50051" --cert-dir "$certDir" --timeout 20
+          } catch {
+            Write-Host "===== ground.out.log (tail) ====="; Get-Content ground.out.log -Tail 200 -ErrorAction SilentlyContinue
+            Write-Host "===== ground.err.log (tail) ====="; Get-Content ground.err.log -Tail 200 -ErrorAction SilentlyContinue
             throw "Ground did not become READY over mTLS in time"
           }
+
       # Run Edge client (foreground), log to file
       - name: Run Python Edge (mTLS)
         shell: pwsh
