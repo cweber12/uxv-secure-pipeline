@@ -71,53 +71,22 @@ jobs:
         shell: pwsh
         run: |
           .\.venv\Scripts\Activate.ps1
-
-          # mTLS env
           $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
           $env:TLS = "1"
           $env:CERT_DIR = (Join-Path (Get-Location) 'creds')
           $env:HOST = "127.0.0.1"
           $env:PORT = "50051"
-
-          # Optional: turn on gRPC debug on the server
           $env:GRPC_VERBOSITY = "DEBUG"
           $env:GRPC_TRACE = "handshaker,security_handshaker,tcp"
-
-          # clean logs
-          Remove-Item ground.out.log, ground.err.log, ground.pid -ErrorAction SilentlyContinue
-
-          $python = ".\.venv\Scripts\python.exe"
-          
-          # Start Ground server in background
-          $p = Start-Process -FilePath $python `
-                -ArgumentList '-u','-m','ground.server' `
-                -NoNewWindow `
-                -RedirectStandardOutput ground.out.log `
-                -RedirectStandardError ground.err.log `
-                -WorkingDirectory (Get-Location) `
-                -PassThru
-          
-          $p.Id | Out-File ground.pid -Encoding ascii -NoNewline
-          Write-Host "Ground server started with PID: $($p.Id)"
-          
-          # Wait a moment for server to start
-          Start-Sleep -Seconds 3
-          
-          # Check if process is still running
-          if (-not (Get-Process -Id $p.Id -ErrorAction SilentlyContinue)) {
-              Write-Error "Ground server process died during startup"
-              Write-Host "===== ground.out.log ====="
-              Get-Content ground.out.log -ErrorAction SilentlyContinue | Out-Host
-              Write-Host "===== ground.err.log ====="
-              Get-Content ground.err.log -ErrorAction SilentlyContinue | Out-Host
-              exit 1
-          }
-          
-          # Show initial logs
-          Write-Host "===== ground.out.log (startup) ====="
-          Get-Content ground.out.log -ErrorAction SilentlyContinue | Out-Host
-          Write-Host "===== ground.err.log (startup) ====="
-          Get-Content ground.err.log -ErrorAction SilentlyContinue | Out-Host
+          Start-Process -FilePath .\.venv\Scripts\python.exe `
+            -ArgumentList '-u','-m','ground.server' `
+            -NoNewWindow `
+            -RedirectStandardOutput ground.out.log `
+            -RedirectStandardError ground.err.log `
+            -WorkingDirectory (Get-Location) `
+            -PassThru | Select-Object -ExpandProperty Id | Out-File ground.pid -Encoding ascii -NoNewline
+          Start-Sleep -Seconds 8
+          Write-Host "Ground server started"
 
       # Wait for Ground to be ready for gRPC connections
       - name: Wait for Ground gRPC readiness
@@ -125,179 +94,27 @@ jobs:
         run: |
           .\.venv\Scripts\Activate.ps1
           $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
-          
-          Write-Host "Testing gRPC connection readiness..."
-          Write-Host "Current directory: $(Get-Location)"
-          Write-Host "Certificate files:"
-          Get-ChildItem creds\*.crt, creds\*.key | Select-Object Name, Length | Out-Host
-          
-          # First, test basic TCP connectivity
-          Write-Host "Testing basic TCP connectivity to 127.0.0.1:50051..."
-          try {
-              $tcpClient = New-Object System.Net.Sockets.TcpClient
-              $tcpClient.Connect("127.0.0.1", 50051)
-              $tcpClient.Close()
-              Write-Host "TCP connection successful - port is listening"
-          } catch {
-              Write-Host "TCP connection failed: $($_.Exception.Message)"
-              Write-Host "===== netstat check ====="
-              netstat -ano | Select-String -Pattern ":50051" | Out-Host
-              Write-Host "===== Ground process check ====="
-              if (Test-Path ground.pid) {
-                  $groundPid = [int](Get-Content ground.pid)
-                  Get-Process -Id $groundPid -ErrorAction SilentlyContinue | Out-Host
-              }
-              Write-Error "Cannot proceed with gRPC tests - TCP connection failed"
-              exit 1
-          }
-          
           $maxAttempts = 10
           $delay = 5
           $success = $false
-          
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-              Write-Host "Attempt $attempt of ${maxAttempts}: Testing gRPC connection..."
-              
-              # Create a simple gRPC test script using SYNCHRONOUS gRPC to avoid async conflicts
-              $testScript = @'
-          import sys, pathlib, grpc, traceback
-          import os
-
-          print(f"Python version: {sys.version}")
-          print(f"Current working directory: {pathlib.Path.cwd()}")
-
-          # Enable gRPC debug logging for client side
-          os.environ["GRPC_VERBOSITY"] = "DEBUG"
-          os.environ["GRPC_TRACE"] = "handshaker,tcp,security_handshaker"
-
-          # Add protobuf stubs to path
-          gen_path = pathlib.Path("gen/python").resolve()
-          sys.path.insert(0, str(gen_path))
-          print(f"Added to Python path: {gen_path}")
-
-          try:
-              import telemetry_pb2_grpc
-              print("Successfully imported telemetry_pb2_grpc")
-          except ImportError as e:
-              print(f"Failed to import protobuf stubs: {e}")
-              traceback.print_exc()
-              sys.exit(2)
-
-          def test_connection():
-              try:
-                  cert_dir = pathlib.Path("creds")
-                  print(f"Certificate directory: {cert_dir.resolve()}")
-                  
-                  # Check certificate files exist
-                  ca_file = cert_dir / "ca.crt"
-                  client_key_file = cert_dir / "client.key"
-                  client_crt_file = cert_dir / "client.crt"
-                  
-                  for cert_file in [ca_file, client_key_file, client_crt_file]:
-                      if not cert_file.exists():
-                          print(f"ERROR: Certificate file missing: {cert_file}")
-                          return False
-                      else:
-                          print(f"Found certificate: {cert_file.name} ({cert_file.stat().st_size} bytes)")
-                  
-                  # Load certificates
-                  ca = ca_file.read_bytes()
-                  client_key = client_key_file.read_bytes()
-                  client_crt = client_crt_file.read_bytes()
-                  print("Certificates loaded successfully")
-                  
-                  # Create credentials
-                  creds = grpc.ssl_channel_credentials(
-                      root_certificates=ca,
-                      private_key=client_key,
-                      certificate_chain=client_crt,
-                  )
-                  print("SSL credentials created")
-                  
-                  # Create SYNCHRONOUS channel to avoid async event loop conflicts
-                  options = [("grpc.ssl_target_name_override", "localhost")]
-                  channel = grpc.secure_channel("127.0.0.1:50051", creds, options=options)
-                  print("Secure channel created")
-                  
-                  # Test channel readiness with synchronous call
-                  print("Testing channel readiness...")
-                  try:
-                      # Try a shorter timeout first
-                      grpc.channel_ready_future(channel).result(timeout=3.0)
-                      print("gRPC channel ready")
-                      return True
-                  except grpc.FutureTimeoutError:
-                      print("Channel readiness timed out, trying alternative test...")
-                      # Alternative: try to create a stub and see if that works
-                      try:
-                          stub = telemetry_pb2_grpc.TelemetryIngestStub(channel)
-                          print("gRPC stub created successfully - server responding")
-                          return True
-                      except Exception as e:
-                          print(f"Stub creation also failed: {e}")
-                          raise
-                  
-              except grpc.FutureTimeoutError:
-                  print("Timeout waiting for channel ready")
-                  return False
-              except Exception as e:
-                  print(f"gRPC test failed: {type(e).__name__}: {e}")
-                  traceback.print_exc()
-                  return False
-              finally:
-                  try:
-                      channel.close()
-                      print("Channel closed")
-                  except:
-                      pass
-
-          if __name__ == "__main__":
-              try:
-                  result = test_connection()
-                  sys.exit(0 if result else 1)
-              except Exception as e:
-                  print(f"FATAL ERROR: {type(e).__name__}: {e}")
-                  traceback.print_exc()
-                  sys.exit(2)
-          '@
-                        
-              Set-Content -Path "test_grpc.py" -Value $testScript -Encoding UTF8
-              
-              Write-Host "Running gRPC test..."
-              try {
-                  python test_grpc.py 2>&1 | Out-Host
-                  if ($LASTEXITCODE -eq 0) {
-                      Write-Host "gRPC connection successful!"
-                      $success = $true
-                      break
-                  } else {
-                      Write-Host "gRPC connection failed (exit code: $LASTEXITCODE)"
-                  }
-              } catch {
-                  Write-Host "gRPC test script execution failed: $($_.Exception.Message)"
-              }
-              
-              if ($attempt -lt $maxAttempts) {
-                  Write-Host "Waiting ${delay}s before next attempt..."
-                  Start-Sleep -Seconds $delay
-              }
+            try {
+              $tcp = New-Object System.Net.Sockets.TcpClient
+              $tcp.Connect("127.0.0.1", 50051)
+              $tcp.Close()
+              Write-Host "TCP connection successful"
+              $success = $true
+              break
+            } catch {
+              Write-Host "Attempt $attempt: TCP not ready, waiting $delay seconds..."
+              Start-Sleep -Seconds $delay
+            }
           }
-          
           if (-not $success) {
-              Write-Host "gRPC readiness check failed, but TCP connection was successful"
-              Write-Host "This might be a TLS handshake issue in the CI environment"
-              Write-Host "===== Final ground.out.log ====="
-              Get-Content ground.out.log -ErrorAction SilentlyContinue | Out-Host
-              Write-Host "===== Final ground.err.log ====="
-              Get-Content ground.err.log -ErrorAction SilentlyContinue | Out-Host
-              Write-Host "===== Final test_grpc.py output (last run) ====="
-              if (Test-Path "test_grpc.py") {
-                  python test_grpc.py 2>&1 | Out-Host
-              }
-              
-              Write-Host "Proceeding anyway since TCP connection works - this may indicate a CI-specific TLS issue"
-              Write-Host "The Edge client may have better success with the actual connection"
+            Write-Error "Ground server never became ready for TCP connections"
+            exit 1
           }
+          Write-Host "Ground server is ready for gRPC connections"
 
       # Run Edge client (foreground), log to file
       - name: Run Python Edge (mTLS)
