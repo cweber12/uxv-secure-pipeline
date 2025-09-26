@@ -91,7 +91,7 @@ jobs:
           $p.BeginErrorReadLine()
           $p.Id | Out-File -Encoding ascii ground.pid
 
-          Start-Sleep -Seconds 1
+          Start-Sleep -Seconds 10
           if (Test-Path ground.out.log) { Get-Content ground.out.log -Tail 50 -ErrorAction SilentlyContinue | Write-Host }
 
 
