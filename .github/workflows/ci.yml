@@ -138,9 +138,9 @@ jobs:
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
               Write-Host "Attempt $attempt of ${maxAttempts}: Testing gRPC connection..."
               
-              # Create a simple gRPC test script with better error handling
+              # Create a simple gRPC test script using SYNCHRONOUS gRPC to avoid async conflicts
               $testScript = @'
-          import sys, pathlib, grpc, asyncio, traceback
+          import sys, pathlib, grpc, traceback
 
           print(f"Python version: {sys.version}")
           print(f"Current working directory: {pathlib.Path.cwd()}")
@@ -158,7 +158,7 @@ jobs:
               traceback.print_exc()
               sys.exit(2)
 
-          async def test_connection():
+          def test_connection():
               try:
                   cert_dir = pathlib.Path("creds")
                   print(f"Certificate directory: {cert_dir.resolve()}")
@@ -189,18 +189,18 @@ jobs:
                   )
                   print("SSL credentials created")
                   
-                  # Create channel with proper options
+                  # Create SYNCHRONOUS channel to avoid async event loop conflicts
                   options = [("grpc.ssl_target_name_override", "localhost")]
-                  channel = grpc.aio.secure_channel("127.0.0.1:50051", creds, options=options)
+                  channel = grpc.secure_channel("127.0.0.1:50051", creds, options=options)
                   print("Secure channel created")
                   
-                  # Test channel readiness
+                  # Test channel readiness with synchronous call
                   print("Testing channel readiness...")
-                  await asyncio.wait_for(channel.channel_ready(), timeout=5.0)
+                  grpc.channel_ready_future(channel).result(timeout=10.0)
                   print("gRPC channel ready")
                   return True
                   
-              except asyncio.TimeoutError:
+              except grpc.FutureTimeoutError:
                   print("Timeout waiting for channel ready")
                   return False
               except Exception as e:
@@ -209,14 +209,14 @@ jobs:
                   return False
               finally:
                   try:
-                      await channel.close()
+                      channel.close()
                       print("Channel closed")
                   except:
                       pass
 
           if __name__ == "__main__":
               try:
-                  result = asyncio.run(test_connection())
+                  result = test_connection()
                   sys.exit(0 if result else 1)
               except Exception as e:
                   print(f"FATAL ERROR: {type(e).__name__}: {e}")
