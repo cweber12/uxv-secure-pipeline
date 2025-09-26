@@ -72,45 +72,56 @@ jobs:
         run: |
           .\.venv\Scripts\Activate.ps1
           $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
-          $env:TLS = '1'
-          $env:CERT_DIR = 'creds'
+          $env:TLS = "1"
+          $env:CERT_DIR = (Join-Path (Get-Location) 'creds')
+          # gRPC debug on server
+          $env:GRPC_VERBOSITY = "DEBUG"
+          $env:GRPC_TRACE = "handshaker,security_handshaker,tcp,http"
 
-          $args = @('-u','-m','ground.server')
-          $proc = Start-Process -FilePath python `
-                                -ArgumentList $args `
-                                -WorkingDirectory (Get-Location) `
-                                -NoNewWindow `
-                                -RedirectStandardOutput 'ground.out.log' `
-                                -RedirectStandardError  'ground.err.log' `
-                                -PassThru
-          $proc.Id | Out-File -FilePath ground.pid -Encoding ascii
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = (Get-Command python).Path
+          $psi.Arguments = "-u -m ground.server"
+          $psi.WorkingDirectory = (Get-Location).Path
+          $psi.UseShellExecute = $false
+          $psi.RedirectStandardOutput = $true
+          $psi.RedirectStandardError  = $true
+
+          $p = [System.Diagnostics.Process]::Start($psi)
+          $p.BeginOutputReadLine()
+          $p.BeginErrorReadLine()
+          $p.Id | Out-File -Encoding ascii ground.pid
+
           Start-Sleep -Seconds 1
-          Write-Host "===== ground.out.log (head) ====="
-          Get-Content ground.out.log -TotalCount 50 -ErrorAction SilentlyContinue
+          if (Test-Path ground.out.log) { Get-Content ground.out.log -Tail 50 -ErrorAction SilentlyContinue | Write-Host }
+
 
       # Wait until gRPC mTLS is actually reachable (use your probe)
       - name: Wait for Ground via gRPC (mTLS)
         shell: pwsh
         run: |
           .\.venv\Scripts\Activate.ps1
-          $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
-          $env:CERT_DIR   = 'creds'
-          $env:ADDR       = '127.0.0.1:50051'
-          $env:SNI        = 'localhost'
-          $deadline = (Get-Date).AddSeconds(45)
-          do {
-            $env:PROBE_TIMEOUT = '5'
-            python -u .\scripts\probe_tls.py
-            if ($LASTEXITCODE -eq 0) { exit 0 }
-            Start-Sleep -Seconds 1
-          } while ((Get-Date) -lt $deadline)
+          # gRPC debug on client probe
+          $env:GRPC_VERBOSITY = "DEBUG"
+          $env:GRPC_TRACE = "handshaker,security_handshaker,tcp,http"
 
-          Write-Host "===== ground.out.log (tail) ====="
-          Get-Content ground.out.log -Tail 200 -ErrorAction SilentlyContinue
-          Write-Host "===== ground.err.log (tail) ====="
-          Get-Content ground.err.log -Tail 200 -ErrorAction SilentlyContinue
-          throw "Ground did not become READY over mTLS in time"
+          $ok = $false
+          $certDir = (Join-Path (Get-Location) 'creds')
+          foreach ($i in 1..6) {
+            Write-Host "Probe attempt $i/6…"
+            python -u scripts\probe_tls.py --addr 127.0.0.1:50051 --cert-dir $certDir --timeout 10
+            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+            Start-Sleep -Seconds 5
+          }
 
+          if (-not $ok) {
+            Write-Host "===== ground.out.log (tail) ====="
+            Get-Content ground.out.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
+            Write-Host "===== ground.err.log (tail) ====="
+            Get-Content ground.err.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
+            throw "Ground did not become READY over mTLS in time"
+          }
+
+      # Run Edge client (foreground), log to file
       - name: Run Python Edge (mTLS)
         shell: pwsh
         env:
@@ -143,9 +154,9 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path ground.pid) {
-            $gp = Get-Content ground.pid
+            $gp = [int](Get-Content ground.pid)
             Write-Host "Stopping Ground PID $gp"
-            Stop-Process -Id $gp -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $gp -ErrorAction SilentlyContinue
           }
 
       - name: Upload logs
