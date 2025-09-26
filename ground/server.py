@@ -1,4 +1,6 @@
 # ground/server.py
+from __future__ import annotations
+
 import os
 import sys
 import ssl
@@ -10,7 +12,7 @@ import json
 import time
 from typing import Tuple
 from google.protobuf.json_format import MessageToDict
-from __future__ import annotations
+
 
 # Ensure repo root on sys.path so package imports work in both "python -m" and direct execution
 ROOT = pathlib.Path(__file__).resolve().parents[1]
