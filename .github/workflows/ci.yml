@@ -106,7 +106,7 @@ jobs:
               $success = $true
               break
             } catch {
-              Write-Host "Attempt $attempt: TCP not ready, waiting $delay seconds..."
+              Write-Host "Attempt $attempt`: TCP not ready, waiting $delay seconds..."
               Start-Sleep -Seconds $delay
             }
           }
