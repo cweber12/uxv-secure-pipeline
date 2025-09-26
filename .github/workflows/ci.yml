@@ -98,28 +98,8 @@ jobs:
       # Wait until gRPC mTLS is actually reachable (use your probe)
       - name: Wait for Ground via gRPC (mTLS)
         shell: pwsh
-        run: |
-          .\.venv\Scripts\Activate.ps1
-          # gRPC debug on client probe
-          $env:GRPC_VERBOSITY = "DEBUG"
-          $env:GRPC_TRACE = "handshaker,security_handshaker,tcp,http"
-
-          $ok = $false
-          $certDir = (Join-Path (Get-Location) 'creds')
-          foreach ($i in 1..6) {
-            Write-Host "Probe attempt $i/6…"
-            python -u scripts\probe_tls.py --addr 127.0.0.1:50051 --cert-dir $certDir --timeout 10
-            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
-            Start-Sleep -Seconds 5
-          }
-
-          if (-not $ok) {
-            Write-Host "===== ground.out.log (tail) ====="
-            Get-Content ground.out.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
-            Write-Host "===== ground.err.log (tail) ====="
-            Get-Content ground.err.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
-            throw "Ground did not become READY over mTLS in time"
-          }
+        run: python -u scripts\probe_tls.py --addr 127.0.0.1:50051 --cert-dir $certDir --timeout 10
+            
 
       # Run Edge client (foreground), log to file
       - name: Run Python Edge (mTLS)
