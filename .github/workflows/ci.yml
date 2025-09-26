@@ -67,7 +67,7 @@ jobs:
           Get-ChildItem creds
 
       # Launch Ground (bg) with mTLS and real log files
-      - name: Launch Ground (bg)
+      - name: Launch Ground (bg, TLS)
         shell: pwsh
         run: |
           .\.venv\Scripts\Activate.ps1
@@ -86,20 +86,129 @@ jobs:
           # clean logs
           Remove-Item ground.out.log, ground.err.log, ground.pid -ErrorAction SilentlyContinue
 
-          $py = Join-Path (Get-Location) '.venv\Scripts\python.exe'
-          $args = @('-u','-m','ground.server')
+          $python = ".\.venv\Scripts\python.exe"
+          
+          # Start Ground server in background
+          $p = Start-Process -FilePath $python `
+                -ArgumentList '-u','-m','ground.server' `
+                -NoNewWindow `
+                -RedirectStandardOutput ground.out.log `
+                -RedirectStandardError ground.err.log `
+                -WorkingDirectory (Get-Location) `
+                -PassThru
+          
+          $p.Id | Out-File ground.pid -Encoding ascii -NoNewline
+          Write-Host "Ground server started with PID: $($p.Id)"
+          
+          # Wait a moment for server to start
+          Start-Sleep -Seconds 3
+          
+          # Check if process is still running
+          if (-not (Get-Process -Id $p.Id -ErrorAction SilentlyContinue)) {
+              Write-Error "Ground server process died during startup"
+              Write-Host "===== ground.out.log ====="
+              Get-Content ground.out.log -ErrorAction SilentlyContinue | Out-Host
+              Write-Host "===== ground.err.log ====="
+              Get-Content ground.err.log -ErrorAction SilentlyContinue | Out-Host
+              exit 1
+          }
+          
+          # Show initial logs
+          Write-Host "===== ground.out.log (startup) ====="
+          Get-Content ground.out.log -ErrorAction SilentlyContinue | Out-Host
+          Write-Host "===== ground.err.log (startup) ====="
+          Get-Content ground.err.log -ErrorAction SilentlyContinue | Out-Host
 
-          $p = Start-Process -FilePath $py -ArgumentList $args `
-              -RedirectStandardOutput (Join-Path (Get-Location) 'ground.out.log') `
-              -RedirectStandardError  (Join-Path (Get-Location) 'ground.err.log') `
-              -NoNewWindow -PassThru
-
-          $p.Id | Out-File -FilePath ground.pid -Encoding ascii -NoNewline
-
-          Start-Sleep -Seconds 2
-          Write-Host "Ground PID: $($p.Id)"
-          # show something immediately if available
-          Get-Content ground.out.log -Tail 50 -ErrorAction SilentlyContinue | Write-Host
+      # Wait for Ground to be ready for gRPC connections
+      - name: Wait for Ground gRPC readiness
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\Activate.ps1
+          $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
+          
+          Write-Host "Testing gRPC connection readiness..."
+          $maxAttempts = 20
+          $delay = 3
+          $success = $false
+          
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+              Write-Host "Attempt $attempt/$maxAttempts: Testing gRPC connection..."
+              
+              # Create a simple gRPC test script
+              $testScript = @'
+          import sys, pathlib, grpc, asyncio
+          
+          # Add protobuf stubs to path
+          sys.path.insert(0, str(pathlib.Path("gen/python").resolve()))
+          
+          try:
+              import telemetry_pb2_grpc
+          except ImportError as e:
+              print(f"Failed to import protobuf stubs: {e}")
+              sys.exit(2)
+          
+          async def test_connection():
+              cert_dir = pathlib.Path("creds")
+              
+              # Load certificates
+              ca = (cert_dir / "ca.crt").read_bytes()
+              client_key = (cert_dir / "client.key").read_bytes()
+              client_crt = (cert_dir / "client.crt").read_bytes()
+              
+              creds = grpc.ssl_channel_credentials(
+                  root_certificates=ca,
+                  private_key=client_key,
+                  certificate_chain=client_crt,
+              )
+              
+              options = [("grpc.ssl_target_name_override", "localhost")]
+              channel = grpc.aio.secure_channel("127.0.0.1:50051", creds, options=options)
+              
+              try:
+                  # Test channel readiness
+                  await asyncio.wait_for(channel.channel_ready(), timeout=5.0)
+                  print("gRPC channel ready")
+                  return True
+              except Exception as e:
+                  print(f"gRPC test failed: {e}")
+                  return False
+              finally:
+                  await channel.close()
+          
+          if __name__ == "__main__":
+              result = asyncio.run(test_connection())
+              sys.exit(0 if result else 1)
+          '@
+              
+              Set-Content -Path "test_grpc.py" -Value $testScript -Encoding UTF8
+              
+              try {
+                  python test_grpc.py
+                  if ($LASTEXITCODE -eq 0) {
+                      Write-Host "gRPC connection successful!"
+                      $success = $true
+                      break
+                  } else {
+                      Write-Host "gRPC connection failed (exit code: $LASTEXITCODE)"
+                  }
+              } catch {
+                  Write-Host "gRPC test script failed: $($_.Exception.Message)"
+              }
+              
+              if ($attempt -lt $maxAttempts) {
+                  Write-Host "Waiting ${delay}s before next attempt..."
+                  Start-Sleep -Seconds $delay
+              }
+          }
+          
+          if (-not $success) {
+              Write-Error "Ground server never became ready for gRPC connections"
+              Write-Host "===== Final ground.out.log ====="
+              Get-Content ground.out.log -ErrorAction SilentlyContinue | Out-Host
+              Write-Host "===== Final ground.err.log ====="
+              Get-Content ground.err.log -ErrorAction SilentlyContinue | Out-Host
+              exit 1
+          }
 
       # Run Edge client (foreground), log to file
       - name: Run Python Edge (mTLS)
@@ -107,17 +216,46 @@ jobs:
         env:
           TLS: "1"
           CERT_DIR: "creds"
+          TLS_OVERRIDE_HOST: "localhost"
         run: |
           .\.venv\Scripts\Activate.ps1
           $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
-          ( python -u -m edge.client 2>&1 | Tee-Object edge_py.log )
-          if ($LASTEXITCODE -ne 0) { throw "edge client failed: $LASTEXITCODE" }
+          
+          Write-Host "Starting Edge client..."
+          try {
+              python -u -m edge.client 2>&1 | Tee-Object edge_py.log
+              if ($LASTEXITCODE -ne 0) { 
+                  throw "Edge client failed with exit code: $LASTEXITCODE" 
+              }
+              Write-Host "Edge client completed successfully"
+          } catch {
+              Write-Host "Edge client failed: $($_.Exception.Message)"
+              Write-Host "===== edge_py.log ====="
+              Get-Content edge_py.log -ErrorAction SilentlyContinue | Out-Host
+              throw
+          }
 
       - name: Verify acks
         shell: pwsh
         run: |
-          Select-String -Path edge_py.log -Pattern "\[edge\] telemetry ack=True" -Quiet | Out-Null
-          Select-String -Path edge_py.log -Pattern "\[edge\] detections ack=True" -Quiet | Out-Null
+          Write-Host "Verifying acknowledgments in edge_py.log..."
+          
+          $telemetryAck = Select-String -Path edge_py.log -Pattern "\[edge\] telemetry ack=True" -Quiet
+          $detectionsAck = Select-String -Path edge_py.log -Pattern "\[edge\] detections ack=True" -Quiet
+          
+          if (-not $telemetryAck) {
+              Write-Error "Telemetry acknowledgment not found in logs"
+              Get-Content edge_py.log | Out-Host
+              exit 1
+          }
+          
+          if (-not $detectionsAck) {
+              Write-Error "Detections acknowledgment not found in logs"
+              Get-Content edge_py.log | Out-Host
+              exit 1
+          }
+          
+          Write-Host "All acknowledgments verified successfully"
 
       - name: Show logs on failure
         if: failure()
@@ -125,8 +263,12 @@ jobs:
         run: |
           Write-Host "===== ground.out.log (last 200) ====="
           Get-Content ground.out.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
+          Write-Host "===== ground.err.log (last 200) ====="
+          Get-Content ground.err.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
           Write-Host "===== edge_py.log (last 200) ====="
           Get-Content edge_py.log -Tail 200 -ErrorAction SilentlyContinue | Out-Host
+          Write-Host "===== netstat :50051 ====="
+          netstat -ano | Select-String -Pattern ":50051" | Out-Host
       
       # Teardown
       - name: Stop Ground
@@ -134,9 +276,10 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path ground.pid) {
-            $gp = [int](Get-Content ground.pid)
-            Write-Host "Stopping Ground PID $gp"
-            Stop-Process -Id $gp -ErrorAction SilentlyContinue
+            $groundPid = [int](Get-Content ground.pid)
+            Write-Host "Stopping Ground PID $groundPid"
+            Stop-Process -Id $groundPid -ErrorAction SilentlyContinue
+            Write-Host "Ground server stopped"
           }
 
       - name: Upload logs
@@ -146,5 +289,5 @@ jobs:
           name: e2e-logs
           path: |
             ground.out.log
+            ground.err.log
             edge_py.log
-
