@@ -101,39 +101,6 @@ jobs:
           # show something immediately if available
           Get-Content ground.out.log -Tail 50 -ErrorAction SilentlyContinue | Write-Host
 
-
-      # Quick TCP check so we know the process is listening
-      - name: Wait for Ground TCP :50051
-        shell: pwsh
-        run: |
-          $deadline = (Get-Date).AddSeconds(30)
-          while ((Get-Date) -lt $deadline) {
-            try {
-              $c = New-Object System.Net.Sockets.TcpClient
-              $ar = $c.BeginConnect('127.0.0.1',50051,$null,$null)
-              if ($ar.AsyncWaitHandle.WaitOne(1000) -and $c.Connected) { $c.Close(); Write-Host "TCP open"; exit 0 }
-              $c.Close()
-            } catch { }
-            Start-Sleep -Seconds 1
-          }
-          Write-Host "===== ground.out.log (tail) ====="; Get-Content ground.out.log -Tail 200 -ErrorAction SilentlyContinue
-          Write-Host "===== ground.err.log (tail) ====="; Get-Content ground.err.log -Tail 200 -ErrorAction SilentlyContinue
-          throw "Ground TCP not open in time"
-
-      # Strong mTLS readiness gate using the same code you tested locally
-      - name: Wait for Ground via gRPC (mTLS)
-        shell: pwsh
-        run: |
-          .\.venv\Scripts\Activate.ps1
-          $certDir = (Join-Path (Get-Location) 'creds')
-          try {
-            python .\scripts\probe_tls.py --addr "127.0.0.1:50051" --cert-dir "$certDir" --timeout 20
-          } catch {
-            Write-Host "===== ground.out.log (tail) ====="; Get-Content ground.out.log -Tail 200 -ErrorAction SilentlyContinue
-            Write-Host "===== ground.err.log (tail) ====="; Get-Content ground.err.log -Tail 200 -ErrorAction SilentlyContinue
-            throw "Ground did not become READY over mTLS in time"
-          }
-
       # Run Edge client (foreground), log to file
       - name: Run Python Edge (mTLS)
         shell: pwsh
