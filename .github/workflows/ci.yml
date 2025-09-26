@@ -127,63 +127,108 @@ jobs:
           $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
           
           Write-Host "Testing gRPC connection readiness..."
+          Write-Host "Current directory: $(Get-Location)"
+          Write-Host "Certificate files:"
+          Get-ChildItem creds\*.crt, creds\*.key | Select-Object Name, Length | Out-Host
+          
           $maxAttempts = 20
           $delay = 3
           $success = $false
           
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-              Write-Host "Attempt $attempt of $maxAttempts" ": Testing gRPC connection..."
+              Write-Host "Attempt $attempt of ${maxAttempts}: Testing gRPC connection..."
               
-              # Create a simple gRPC test script
+              # Create a simple gRPC test script with better error handling
               $testScript = @'
-          import sys, pathlib, grpc, asyncio
-          
+          import sys, pathlib, grpc, asyncio, traceback
+
+          print(f"Python version: {sys.version}")
+          print(f"Current working directory: {pathlib.Path.cwd()}")
+
           # Add protobuf stubs to path
-          sys.path.insert(0, str(pathlib.Path("gen/python").resolve()))
-          
+          gen_path = pathlib.Path("gen/python").resolve()
+          sys.path.insert(0, str(gen_path))
+          print(f"Added to Python path: {gen_path}")
+
           try:
               import telemetry_pb2_grpc
+              print("Successfully imported telemetry_pb2_grpc")
           except ImportError as e:
               print(f"Failed to import protobuf stubs: {e}")
+              traceback.print_exc()
               sys.exit(2)
-          
+
           async def test_connection():
-              cert_dir = pathlib.Path("creds")
-              
-              # Load certificates
-              ca = (cert_dir / "ca.crt").read_bytes()
-              client_key = (cert_dir / "client.key").read_bytes()
-              client_crt = (cert_dir / "client.crt").read_bytes()
-              
-              creds = grpc.ssl_channel_credentials(
-                  root_certificates=ca,
-                  private_key=client_key,
-                  certificate_chain=client_crt,
-              )
-              
-              options = [("grpc.ssl_target_name_override", "localhost")]
-              channel = grpc.aio.secure_channel("127.0.0.1:50051", creds, options=options)
-              
               try:
+                  cert_dir = pathlib.Path("creds")
+                  print(f"Certificate directory: {cert_dir.resolve()}")
+                  
+                  # Check certificate files exist
+                  ca_file = cert_dir / "ca.crt"
+                  client_key_file = cert_dir / "client.key"
+                  client_crt_file = cert_dir / "client.crt"
+                  
+                  for cert_file in [ca_file, client_key_file, client_crt_file]:
+                      if not cert_file.exists():
+                          print(f"ERROR: Certificate file missing: {cert_file}")
+                          return False
+                      else:
+                          print(f"Found certificate: {cert_file.name} ({cert_file.stat().st_size} bytes)")
+                  
+                  # Load certificates
+                  ca = ca_file.read_bytes()
+                  client_key = client_key_file.read_bytes()
+                  client_crt = client_crt_file.read_bytes()
+                  print("Certificates loaded successfully")
+                  
+                  # Create credentials
+                  creds = grpc.ssl_channel_credentials(
+                      root_certificates=ca,
+                      private_key=client_key,
+                      certificate_chain=client_crt,
+                  )
+                  print("SSL credentials created")
+                  
+                  # Create channel with proper options
+                  options = [("grpc.ssl_target_name_override", "localhost")]
+                  channel = grpc.aio.secure_channel("127.0.0.1:50051", creds, options=options)
+                  print("Secure channel created")
+                  
                   # Test channel readiness
+                  print("Testing channel readiness...")
                   await asyncio.wait_for(channel.channel_ready(), timeout=5.0)
                   print("gRPC channel ready")
                   return True
+                  
+              except asyncio.TimeoutError:
+                  print("Timeout waiting for channel ready")
+                  return False
               except Exception as e:
-                  print(f"gRPC test failed: {e}")
+                  print(f"gRPC test failed: {type(e).__name__}: {e}")
+                  traceback.print_exc()
                   return False
               finally:
-                  await channel.close()
-          
+                  try:
+                      await channel.close()
+                      print("Channel closed")
+                  except:
+                      pass
+
           if __name__ == "__main__":
-              result = asyncio.run(test_connection())
-              sys.exit(0 if result else 1)
+              try:
+                  result = asyncio.run(test_connection())
+                  sys.exit(0 if result else 1)
+              except Exception as e:
+                  print(f"FATAL ERROR: {type(e).__name__}: {e}")
+                  traceback.print_exc()
+                  sys.exit(2)
           '@
-              
+                        
               Set-Content -Path "test_grpc.py" -Value $testScript -Encoding UTF8
               
+              Write-Host "Running gRPC test..."
               try {
-                  python test_grpc.py
+                  python test_grpc.py 2>&1 | Out-Host
                   if ($LASTEXITCODE -eq 0) {
                       Write-Host "gRPC connection successful!"
                       $success = $true
@@ -192,7 +237,7 @@ jobs:
                       Write-Host "gRPC connection failed (exit code: $LASTEXITCODE)"
                   }
               } catch {
-                  Write-Host "gRPC test script failed: $($_.Exception.Message)"
+                  Write-Host "gRPC test script execution failed: $($_.Exception.Message)"
               }
               
               if ($attempt -lt $maxAttempts) {
@@ -207,6 +252,10 @@ jobs:
               Get-Content ground.out.log -ErrorAction SilentlyContinue | Out-Host
               Write-Host "===== Final ground.err.log ====="
               Get-Content ground.err.log -ErrorAction SilentlyContinue | Out-Host
+              Write-Host "===== Final test_grpc.py output (last run) ====="
+              if (Test-Path "test_grpc.py") {
+                  python test_grpc.py 2>&1 | Out-Host
+              }
               exit 1
           }
 
