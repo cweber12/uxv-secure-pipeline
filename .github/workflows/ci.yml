@@ -132,7 +132,7 @@ jobs:
           $success = $false
           
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-              Write-Host "Attempt $attempt of $maxAttempts: Testing gRPC connection..."
+              Write-Host "Attempt $attempt of $maxAttempts" ": Testing gRPC connection..."
               
               # Create a simple gRPC test script
               $testScript = @'
