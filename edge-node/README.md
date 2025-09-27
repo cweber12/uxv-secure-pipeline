@@ -87,13 +87,13 @@ The Ground window logs each incoming message as it arrives.
 
 - Detections: 5 messages at 2 Hz, random confidence in [0.8, 1.0], simple bounding box increments.
 
-- Timestamps: ts_ns in nanoseconds (sent as strings to avoid JS 64-bit integer precision issues).
+- Timestamps: `ts_ns` in nanoseconds (sent as strings to avoid JS 64-bit integer precision issues).
 
-You can adjust cadence/counts by editing the parameters in client.js (e.g., n and `hz`).
+You can adjust cadence/counts by editing the parameters in client.js (e.g., `n` and `hz`).
 
 ## How It Works
 
-Runtime proto loading (no codegen step):
+Runtime proto loading (no `codegen` step):
 
 - Uses `@grpc/proto-loader` to load ../proto/telemetry.proto and ../proto/detections.proto.
 
@@ -113,7 +113,7 @@ Options: keepCase: true (preserves field names like `ts_ns`), longs: String (saf
 
 Ground server not running or port blocked. Start the Python Ground server and/or check firewall prompts.
 
-### Cannot find module '@grpc/grpc-js' or @grpc/proto-loader
+### Cannot find module '`@grpc/grpc-js`' or `@grpc/proto-loader`
 
 Run `npm install` inside edge-node/.
 

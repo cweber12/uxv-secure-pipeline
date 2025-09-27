@@ -71,74 +71,92 @@ jobs:
         shell: pwsh
         run: |
           .\.venv\Scripts\Activate.ps1
-          $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
+          $root = Get-Location
+
+          # Use absolute paths for PYTHONPATH and CERT_DIR to avoid issues with working directory changes
+          $env:PYTHONPATH = (Join-Path $root 'gen\python')
           $env:TLS = "1"
-          $env:CERT_DIR = (Join-Path (Get-Location) 'creds')
+          $env:CERT_DIR = (Join-Path $root 'creds')
           $env:HOST = "127.0.0.1"
           $env:PORT = "50051"
           $env:GRPC_VERBOSITY = "DEBUG"
           $env:GRPC_TRACE = "handshaker,security_handshaker,tcp"
-          Start-Process -FilePath .\.venv\Scripts\python.exe `
-            -ArgumentList '-u','-m','ground.server' `
-            -NoNewWindow `
-            -RedirectStandardOutput ground.out.log `
-            -RedirectStandardError ground.err.log `
-            -WorkingDirectory (Get-Location) `
-            -PassThru | Select-Object -ExpandProperty Id | Out-File ground.pid -Encoding ascii -NoNewline
-          Start-Sleep -Seconds 8
-          Write-Host "Ground server started"
 
-      # Wait for Ground to be ready for gRPC connections
-      - name: Wait for Ground gRPC readiness
+          # Clean previous run artifacts
+          Remove-Item -ErrorAction SilentlyContinue ground.out.log,ground.err.log,ground.pid
+
+          $p = Start-Process -FilePath .\.venv\Scripts\python.exe `
+            -ArgumentList '-u','-m','ground.server' `
+            -WorkingDirectory $root `
+            -NoNewWindow `
+            -RedirectStandardOutput (Join-Path $root 'ground.out.log') `
+            -RedirectStandardError  (Join-Path $root 'ground.err.log') `
+            -PassThru
+
+          $p.Id | Out-File -FilePath (Join-Path $root 'ground.pid') -Encoding ascii -NoNewline
+          Write-Host "Ground PID: $($p.Id)"
+          Write-Host "Ground Address: $($env:HOST):$($env:PORT)"
+
+          Start-Sleep -Seconds 2
+          if (-not (Get-Process -Id $p.Id -ErrorAction SilentlyContinue)) {
+            Write-Host "Ground process exited early."
+            Write-Host "===== ground.err.log (tail) ====="
+            Get-Content (Join-Path $root 'ground.err.log') -Tail 200 -ErrorAction SilentlyContinue
+            throw "Ground failed to start"
+          }
+          
+      # Wait for Ground to be READY over mTLS
+      - name: Wait for Ground (mTLS READY)
         shell: pwsh
+        env:
+          # client-side probe verbosity
+          GRPC_VERBOSITY: "DEBUG"
+          GRPC_TRACE: "handshaker,security_handshaker,tcp"
+          PROBE_TIMEOUT: "10"        # seconds per attempt
+          SNI: "localhost"           # must match server cert CN/SAN
         run: |
           .\.venv\Scripts\Activate.ps1
-          $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
-          $maxAttempts = 10
-          $delay = 5
-          $success = $false
-          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-            try {
-              $tcp = New-Object System.Net.Sockets.TcpClient
-              $tcp.Connect("127.0.0.1", 50051)
-              $tcp.Close()
-              Write-Host "TCP connection successful"
-              $success = $true
+          $root = Get-Location
+          $env:PYTHONPATH = (Join-Path $root 'gen\python')
+          $env:CERT_DIR   = (Join-Path $root 'creds')
+
+          $max = 6
+          for ($i=1; $i -le $max; $i++) {
+            Write-Host "[wait] mTLS probe attempt $i/$max"
+            python -u scripts/probe_tls.py
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "[wait] Ground is READY (mTLS)"
               break
-            } catch {
-              Write-Host "Attempt $attempt`: TCP not ready, waiting $delay seconds..."
-              Start-Sleep -Seconds $delay
+            }
+            Start-Sleep -Seconds 5
+            if ($i -eq $max) {
+              Write-Host "===== ground.out.log (tail) ====="
+              Get-Content (Join-Path $root 'ground.out.log') -Tail 200 -ErrorAction SilentlyContinue
+              Write-Host "===== ground.err.log (tail) ====="
+              Get-Content (Join-Path $root 'ground.err.log') -Tail 200 -ErrorAction SilentlyContinue
+              throw "Ground did not become READY over mTLS in time"
             }
           }
-          if (-not $success) {
-            Write-Error "Ground server never became ready for TCP connections"
-            exit 1
-          }
-          Write-Host "Ground server is ready for gRPC connections"
 
       # Run Edge client (foreground), log to file
       - name: Run Python Edge (mTLS)
         shell: pwsh
         env:
           TLS: "1"
-          CERT_DIR: "creds"
-          TLS_OVERRIDE_HOST: "localhost"
+          TLS_OVERRIDE_HOST: "localhost"  # SNI/override host for edge
         run: |
           .\.venv\Scripts\Activate.ps1
-          $env:PYTHONPATH = (Join-Path (Get-Location) 'gen\python')
-          
-          Write-Host "Starting Edge client..."
-          try {
-              python -u -m edge.client 2>&1 | Tee-Object edge_py.log
-              if ($LASTEXITCODE -ne 0) { 
-                  throw "Edge client failed with exit code: $LASTEXITCODE" 
-              }
-              Write-Host "Edge client completed successfully"
-          } catch {
-              Write-Host "Edge client failed: $($_.Exception.Message)"
-              Write-Host "===== edge_py.log ====="
-              Get-Content edge_py.log -ErrorAction SilentlyContinue | Out-Host
-              throw
+          $root = Get-Location
+          $env:PYTHONPATH = (Join-Path $root 'gen\python')
+          $env:CERT_DIR   = (Join-Path $root 'creds')
+
+          Write-Host "Starting Edge client…"
+          python -u -m edge.client 2>&1 | Tee-Object (Join-Path $root 'edge_py.log')
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "===== edge_py.log ====="
+            Get-Content (Join-Path $root 'edge_py.log') -ErrorAction SilentlyContinue
+            throw "Edge client failed with exit code $LASTEXITCODE"
           }
 
       - name: Verify acks
