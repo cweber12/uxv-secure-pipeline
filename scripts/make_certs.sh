@@ -1,9 +1,7 @@
-# ============================================
 # scripts/make_certs.sh
 # Generate local dev certificates for mTLS.
 # Produces creds/{ca.crt,server.crt,server.key,client.crt,client.key}
 # Usage: bash scripts/make_certs.sh
-# ============================================
 
 set -euo pipefail
 

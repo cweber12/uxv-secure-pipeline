@@ -143,72 +143,59 @@ The Node client loads ../proto/*.proto at runtime (no `codegen`) via `@grpc/prot
 
 ## Security
 
-Supports **mutual TLS (mTLS)** for all gRPC calls: encrypts traffic and **authenticates both client and server**.
+This project uses mutual TLS (mTLS) for secure communication between components.
 
-### How to enable
+### Certificate Generation
 
-- Set `TLS=1` to enable mTLS.
-- Set `CERT_DIR` to the folder containing PEM files (default: `creds/`).
+- Certificates are generated using the PowerShell script [`scripts/make_certs.ps1`](scripts/make_certs.ps1).
+- The script creates a root CA, server, and client certificates with appropriate extensions and SANs for local development.
+- All certificates and keys are stored in the `creds/` directory.
 
-### Cert layout
+### Server-Side TLS
 
-```txt
-creds/
-    ca.crt       # Root CA
-    server.crt   # Server cert (signed by CA)
-    server.key   # Server key
-    client.crt   # Client cert (signed by CA)
-    client.key   # Client key
-```
+- The Ground server (`ground/server.py`) loads certificates from the `creds/` directory and enforces mTLS for all gRPC connections.
+- The server verifies client certificates and only accepts connections from trusted clients.
+- TLS parameters and certificate paths are configurable via environment variables (`TLS`, `CERT_DIR`, etc.).
 
-### Generate dev certs
+### Client-Side TLS Probe
 
-**Windows (PowerShell):**
+- The probe script [`scripts/probe_tls.py`](scripts/probe_tls.py) is used in CI and locally to verify that the Ground server is accepting secure connections.
+- It loads the client certificate, key, and CA, and attempts to establish a secure gRPC channel to the server.
+- The probe script reports detailed connectivity and certificate diagnostics for troubleshooting.
 
-```powershell
-.\scripts\make_certs.ps1
-```
+### Security Best Practices
 
-**macOS/Linux (Bash):**
+- Never commit real production certificates or keys to the repository.
+- The provided scripts and configuration are for local development and CI only.
+- For production, generate and manage certificates using a secure process and store them in a protected location.
+- Always verify certificate expiration and renewal policies.
 
-```bash
-bash scripts/make_certs.sh
-```
+---
 
-### Run with mTLS
+## CI/CD
 
-**Ground (server):**
+This project uses GitHub Actions for continuous integration and end-to-end testing. The main workflow is defined in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
-```powershell
-$env:TLS="1"; $env:CERT_DIR="creds"
-python -u -m ground.server
-```
+### Workflow Overview
 
-**Edge (Python):**
+- **Build Python gRPC stubs**: Generates Python code from protocol buffer definitions using `protoc` and `grpcio-tools`.
+- **Create and activate Python virtual environment**: Installs dependencies in an isolated environment.
+- **Generate test certificates**: Runs [`scripts/make_certs.ps1`](scripts/make_certs.ps1) to create mTLS certificates for secure local and CI testing.
+- **Launch Ground server**: Starts the Ground server in the background with mTLS enabled, capturing logs for debugging.
+- **Probe Ground server readiness**: Uses [`scripts/probe_tls.py`](scripts/probe_tls.py) to verify the server is accepting secure gRPC connections before running the Edge client.
+- **Run Edge client**: Executes the Edge client and captures its output to `edge_py.log`.
+- **Verify acknowledgments**: Checks the Edge client log for successful telemetry and detection acknowledgments.
+- **Log collection and diagnostics**: On failure, outputs the last 200 lines of each log and the status of port 50051 for troubleshooting.
+- **Artifact upload**: Uploads logs to GitHub Actions artifacts for review.
 
-```powershell
-$env:TLS="1"; $env:CERT_DIR="creds"
-python -u -m edge.client
-```
+### Key Features
 
-**Edge (Node, optional):**
+- All steps use PowerShell for cross-platform compatibility on Windows runners.
+- Environment variables are set explicitly to ensure correct configuration for TLS and gRPC.
+- The workflow automatically cleans up previous run artifacts and stops the Ground server after tests.
+- The pipeline is designed to fail fast and provide detailed diagnostics if any step does not complete successfully.
 
-```powershell
-$env:TLS="1"; $env:CERT_DIR="creds"
-node .\edge-node\client.js
-```
-
-## CI (GitHub Actions)
-
-- Installs `protoc`, sets up Python 3.11, and installs `grpcio-tools`.
-
-- Compiles .proto → Python stubs into gen/python/ (ephemeral in CI).
-
-- Sanity import: imports the generated modules to catch path/package issues early.
-
-- Optional line-ending check (prevents CRLF noise).
-
-This ensures the contracts are always valid and usable. We keep gen/ out of Git history and prove buildability on every push/PR.
+---
 
 ## Development Workflow
 

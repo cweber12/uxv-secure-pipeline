@@ -1,4 +1,5 @@
 # scripts/make_certs.ps1
+# PowerShell script to generate self-signed mTLS certificates for testing
 param(
   [string]$OutDir = "creds",
   [int]$Days = 365

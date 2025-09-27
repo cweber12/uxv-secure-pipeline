@@ -1,4 +1,5 @@
 # ground/server.py
+# Ground station gRPC server with optional mTLS
 from __future__ import annotations
 
 import os

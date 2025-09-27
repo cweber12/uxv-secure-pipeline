@@ -5,6 +5,7 @@ on:
   pull_request:
 
 jobs:
+  # Build Python gRPC stubs
   proto-build-python:
     runs-on: ubuntu-latest
     steps:
@@ -33,11 +34,15 @@ jobs:
         run: |
           python -c "import sys, pathlib; sys.path.insert(0, str(pathlib.Path('gen/python').resolve())); import telemetry_pb2, telemetry_pb2_grpc, detections_pb2, detections_pb2_grpc; print('Imports OK')"
 
+  # End-to-end smoke test with Python Ground server and Edge client
   e2e-smoke:
     needs: proto-build-python
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
+
+      # Setup
+      # Install Python, deps, generate stubs, make certs
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
@@ -67,7 +72,9 @@ jobs:
           Get-ChildItem creds
 
       # Launch Ground (bg) with mTLS and real log files
-      - name: Launch Ground (bg, TLS)
+      # Probe until READY over mTLS
+      # Run Edge client, capture output to edge_py.log
+      - name: Launch Ground, mTLS Probe, Run Edge Client
         shell: pwsh
         run: |
           .\.venv\Scripts\Activate.ps1
@@ -81,7 +88,6 @@ jobs:
           Write-Host "CERT_DIR: $($env:CERT_DIR)"
           $env:HOST = "127.0.0.1"
           $env:PORT = "50051"
-          $env:GRPC_VERBOSITY = "DEBUG"
           $env:GRPC_TRACE = "handshaker,security_handshaker,tcp"
 
           # Clean previous run artifacts
@@ -136,6 +142,7 @@ jobs:
             throw "Edge client failed with exit code $LASTEXITCODE"
           }
 
+      # Verify acks in edge_py.log
       - name: Verify acks
         shell: pwsh
         run: |
@@ -158,6 +165,7 @@ jobs:
           
           Write-Host "All acknowledgments verified successfully"
 
+      # On failure, show last 200 lines of each log and netstat
       - name: Show logs on failure
         if: failure()
         shell: pwsh
@@ -171,7 +179,7 @@ jobs:
           Write-Host "===== netstat :50051 ====="
           netstat -ano | Select-String -Pattern ":50051" | Out-Host
       
-      # Teardown
+      # Stop Ground if Running
       - name: Stop Ground
         if: always()
         shell: pwsh
@@ -183,6 +191,7 @@ jobs:
             Write-Host "Ground server stopped"
           }
 
+      # Upload logs to artifacts
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
