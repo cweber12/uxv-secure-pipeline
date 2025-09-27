@@ -72,7 +72,7 @@ jobs:
         run: |
           .\.venv\Scripts\Activate.ps1
           $root = Get-Location
-
+          Write-Host "root: $root"
           # Use absolute paths for PYTHONPATH and CERT_DIR to avoid issues with working directory changes
           $env:PYTHONPATH = (Join-Path $root 'gen\python')
           Write-Host "PYTHONPATH: $($env:PYTHONPATH)"
@@ -119,10 +119,19 @@ jobs:
         run: |
           .\.venv\Scripts\Activate.ps1
           $root = Get-Location
+          Write-Host "root: $root"
           $env:PYTHONPATH = (Join-Path $root 'gen\python')
           Write-Host "PYTHONPATH: $($env:PYTHONPATH)"
           $env:CERT_DIR   = (Join-Path $root 'creds')
           Write-Host "CERT_DIR: $($env:CERT_DIR)"
+
+          # Check if Ground process is still running
+          $pidPath = 'ground.pid'
+          if (Test-Path $pidPath) {
+            $pid = Get-Content $pidPath
+            Get-Process -Id $pid -ErrorAction SilentlyContinue | Format-Table Id,ProcessName,HasExited
+          }
+          Get-NetTCPConnection -LocalPort 50051 -ErrorAction SilentlyContinue
 
           $max = 6
           for ($i=1; $i -le $max; $i++) {
