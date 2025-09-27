@@ -1,6 +1,6 @@
-# Protobuf Definitions (`proto/`)
+# `Protobuf` Definitions (`proto/`)
 
-This folder contains the **interface contracts** for the Secure UxV Telemetry & Video Pipeline.  
+This folder contains the **interface contracts** for the Secure `UxV` Telemetry & Video Pipeline.  
 All communication between the **Edge (drone/robot)**, the **Ground station**, and the **Cloud API** goes through these contracts.
 
 ---

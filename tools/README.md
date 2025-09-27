@@ -13,6 +13,6 @@
 
 ## Scanners (planned)
 
-- SBOM: Syft
-- Vulnerability: Grype
+- SBOM: `Syft`
+- Vulnerability: `Grype`
 - CodeQL: GitHub Advanced Security (if enabled)

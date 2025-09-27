@@ -1,12 +1,12 @@
-# Secure UxV Telemetry, Video & Targeting Pipeline
+# Secure `UxV` Telemetry, Video & Targeting Pipeline
 
-An end-to-end, **contracts-first** system for secure, low-latency ingest of UxV telemetry and video, with **on-edge target detection**, **MISB-style KLV tagging** (planned), **encrypted streaming to a ground station** (mTLS planned), and **cloud archiving/replay** (planned).
+An end-to-end, **contracts-first** system for secure, low-latency ingest of `UxV` telemetry and video, with **on-edge target detection**, **MISB-style KLV tagging** (planned), **encrypted streaming to a ground station** (mTLS planned), and **cloud archiving/replay** (planned).
 
 ---
 
 ## What’s in this repo (current MVP)
 
-- **Contracts**: Protobuf/gRPC interfaces in `proto/`.
+- **Contracts**: Protocol Buffer /gRPC interfaces in `proto/`.
 - **Ground (Python)**: Minimal gRPC server that receives telemetry & detections, logs them, and **records to JSONL** for replay (`ground/`).
 - **Edge (Python)**: Client simulator that streams synthetic telemetry & detections (`edge/`).
 - **Edge Node (Node.js)**: Second-language client streaming the same messages using runtime proto loading (`edge-node/`).
@@ -18,8 +18,8 @@ An end-to-end, **contracts-first** system for secure, low-latency ingest of UxV 
 
 ## Success Metrics (target)
 
-- **E2E latency p95 ≤ 300 ms** @ 1080p30 (future video pipeline)
-- **≥ 99.5%** frame↔telemetry pairing with **5% simulated packet loss** (future)
+- **E2E latency p95 ≤ 300 milliseconds** @ 1080p30 (future video pipeline)
+- **≥ 99.5%** frame <-> telemetry pairing with **5% simulated packet loss** (future)
 - **0 critical** findings in container/code scans (future CI gates)
 
 ---
@@ -53,7 +53,7 @@ ci.yml # Proto build + sanity import (Python-based canary)
 
 ## Prerequisites
 
-- **Python** 3.11+ 
+- **Python** 3.11+
 
 - **Node.js** 18+ (for the Node Edge client)
 
@@ -68,7 +68,7 @@ pip install grpcio grpcio-tools
 
 ---
 
-## Generate Protobuf Stubs (Python)
+## Generate Protocol Buffer Stubs (Python)
 
 CI proves the protos compile, but for local runs you need stubs in `gen/python/`.
 
@@ -92,9 +92,9 @@ python -m grpc_tools.protoc -I proto \
   proto/telemetry.proto proto/detections.proto
 ```
 
-## Quickstart: Run the Demo
+## Quick Start: Run the Demo
 
-### Terminal A – Ground server:
+### Terminal A – Ground server
 
 ```powershell
 # from repo root
@@ -103,7 +103,7 @@ python -u -m ground.server
 # expected: "[ground] listening on 0.0.0.0:50051"
 ```
 
-### Terminal B – Edge simulator:
+### Terminal B – Edge simulator
 
 ```powershell
 # from repo root
@@ -112,14 +112,14 @@ python -u -m edge.client
 # expected: "[edge] telemetry ack=True" and "[edge] detections ack=True"
 ```
 
-## Ground output: logs each message, then:
+## Ground output: logs each message, then
 
 ```csharp
 [telemetry] stream closed, total=10
 [detection] stream closed, total=5
 ```
 
-## Recorder output: JSONL files per mission:
+## Recorder output: JSONL files per mission
 
 ```bash
 missions/mission-YYYYMMDD-HHMMSS/
@@ -129,7 +129,7 @@ missions/mission-YYYYMMDD-HHMMSS/
 
 ## Cross-Language Demo: Node Edge → Python Ground
 
-### Install & run (with Ground already running):
+### Install & run (with Ground already running)
 
 ```powershell
 cd edge-node
@@ -139,7 +139,7 @@ npm start
 ```
 
 The Ground server logs should look the same as with the Python Edge.
-The Node client loads ../proto/*.proto at runtime (no codegen) via @grpc/proto-loader.
+The Node client loads ../proto/*.proto at runtime (no `codegen`) via `@grpc/proto-loader`.
 
 ## Security
 
@@ -200,7 +200,7 @@ node .\edge-node\client.js
 
 ## CI (GitHub Actions)
 
-- Installs protoc, sets up Python 3.11, and installs grpcio-tools.
+- Installs `protoc`, sets up Python 3.11, and installs `grpcio-tools`.
 
 - Compiles .proto → Python stubs into gen/python/ (ephemeral in CI).
 
@@ -215,7 +215,7 @@ This ensures the contracts are always valid and usable. We keep gen/ out of Git 
 - Edit .proto files in proto/.
 
 - Regenerate stubs for your language(s). For Python, see commands above.
-- For Node, no codegen needed; it loads .proto at runtime.
+- For Node, no `codegen` needed; it loads .proto at runtime.
 
 - Run Ground + Edge to validate end-to-end.
 
@@ -223,7 +223,7 @@ This ensures the contracts are always valid and usable. We keep gen/ out of Git 
 
 Compatibility tip: Never reuse field numbers in .proto. If you remove a field, mark its number reserved.
 
-## .gitignore (recommended)
+## `.gitignore` (recommended)
 
 Add/keep:
 
@@ -257,4 +257,4 @@ missions/
 
 ### Windows line continuations
 
-- Prefer the one-line PowerShell commands shown above.
+- Prefer the one-line PowerShell commands shown above

@@ -38,7 +38,7 @@ The client imports generated stubs from `gen/python/` (created from the `.proto`
   pip install grpcio grpcio-tools
   ```
 
-## Generated stubs for Python in gen/python/:
+## Generated stubs for Python in gen/python/
 
 ```powershell
 mkdir -Force gen\python
@@ -49,7 +49,7 @@ CI already compiles the protos as a canary, but for local runs you need the file
 
 ## How to Run
 
-### Start the Ground server (separate terminal):
+### Start the Ground server (separate terminal)
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
@@ -59,7 +59,7 @@ python -u -m ground.server
 # python -u .\ground\server.py
 ```
 
-### Run the Edge client (repo root, new terminal):
+### Run the Edge client (repo root, new terminal)
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
@@ -71,14 +71,14 @@ python -u -m edge.client
 
 ## Expected output
 
-### Client:
+### Client
 
 ```csharp
 [edge] telemetry ack=True
 [edge] detections ack=True
 ```
 
-### Ground: logs each received telemetry/detection and then:
+### Ground: logs each received telemetry/detection and then
 
 ```csharp
 [telemetry] stream closed, total=10
@@ -87,11 +87,11 @@ python -u -m edge.client
 
 ## What the Client Sends (Defaults)
 
-- Telemetry: 10 messages at 5 Hz (every 200 ms) with gradually changing lat, lon, alt_m.
+- Telemetry: 10 messages at 5 Hz (every 200 `ms`) with gradually changing `lat`, `lon`, alt_m.
 
-- Detections: 5 messages at 2 Hz with random confidence in [0.8, 1.0] and simple bbox increments.
+- Detections: 5 messages at 2 Hz with random confidence in [0.8, 1.0] and simple `bbox` increments.
 
-- Timestamps: ts_ns based on time.monotonic_ns() (nanoseconds, monotonic clock).
+- Timestamps: `ts_ns` based on time.monotonic_ns() (nanoseconds, monotonic clock).
 
 - The server address defaults to localhost:50051 inside client.py. Edit the main() default if you need to target a different host/port.
 
@@ -115,4 +115,4 @@ python -u -m edge.client
 
 ### Firewall prompts
 
-- Allow Python on private networks the first time you run the server/client.
+- Allow Python on private networks the first time you run the server/client

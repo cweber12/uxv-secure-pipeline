@@ -6,7 +6,7 @@ A minimal **Node.js Edge client** that streams **telemetry** and **detections** 
 
 ## Purpose
 
-- Prove that a single set of **Protobuf/gRPC contracts** works across languages.
+- Prove that a single set of **`Protobuf`/gRPC contracts** works across languages.
 - Stream **client-side gRPC** to the Ground:
   - `TelemetryIngest.StreamTelemetry` (client-streaming)
   - `DetectionIngest.StreamDetections` (client-streaming)
@@ -17,12 +17,9 @@ A minimal **Node.js Edge client** that streams **telemetry** and **detections** 
 ## Contents
 
 edge-node/
-client.js # Node edge client (loads .proto at runtime; no codegen needed)
-package.json # NPM metadata + dependencies (@grpc/grpc-js, @grpc/proto-loader)
+client.js # Node edge client (loads .proto at runtime; no `codegen` needed)
+`package.json` # NPM metadata + dependencies `(@grpc/grpc-js, @grpc/proto-loader)`
 README.md # This file
-
-yaml
-Copy code
 
 > The client loads `.proto` files directly from `../proto/` via `@grpc/proto-loader`.
 
@@ -39,7 +36,7 @@ Copy code
   python -u -m ground.server
   ```
 
-## Repo layout (relative paths assumed):
+## Repo layout (relative paths assumed)
 
 ```txt
 proto/
@@ -63,21 +60,19 @@ npm install
 With the Ground server already listening:
 
 ```bash
-Copy code
 # default: localhost:50051
 npm start
 ```
 
-### custom address via CLI arg:
+### custom address via CLI `arg`
 
 ```bash
 node client.js 192.168.1.50:50051
-# or via env var:
+# or
 ADDR=192.168.1.50:50051 npm start
 ```
 
-
-## Expected output:
+## Expected output
 
 ```csharp
 [node-edge] telemetry ack= true
@@ -88,23 +83,23 @@ The Ground window logs each incoming message as it arrives.
 
 ## What the Client Sends (Defaults)
 
-- Telemetry: 10 messages at 5 Hz (every 200 ms) with slightly changing lat, lon, and alt_m.
+- Telemetry: 10 messages at 5 Hz (every 200 `ms`) with slightly changing `lat`, `lon`, and alt_m.
 
 - Detections: 5 messages at 2 Hz, random confidence in [0.8, 1.0], simple bounding box increments.
 
 - Timestamps: ts_ns in nanoseconds (sent as strings to avoid JS 64-bit integer precision issues).
 
-You can adjust cadence/counts by editing the parameters in client.js (e.g., n and hz).
+You can adjust cadence/counts by editing the parameters in client.js (e.g., n and `hz`).
 
 ## How It Works
 
 Runtime proto loading (no codegen step):
 
-- Uses @grpc/proto-loader to load ../proto/telemetry.proto and ../proto/detections.proto.
+- Uses `@grpc/proto-loader` to load ../proto/telemetry.proto and ../proto/detections.proto.
 
-Options: keepCase: true (preserves field names like ts_ns), longs: String (safe int64 handling).
+Options: keepCase: true (preserves field names like `ts_ns`), longs: String (safe int64 handling).
 
-## Client-streaming RPCs:
+## Client-streaming RPCs
 
 - Opens a stream with StreamTelemetry / StreamDetections.
 
@@ -120,7 +115,7 @@ Ground server not running or port blocked. Start the Python Ground server and/or
 
 ### Cannot find module '@grpc/grpc-js' or @grpc/proto-loader
 
-Run npm install inside edge-node/.
+Run `npm install` inside edge-node/.
 
 ### ENOENT (cannot find .proto)
 
@@ -128,4 +123,4 @@ Confirm repo structure and that client.js references ../proto/telemetry.proto an
 
 ### No logs on Ground
 
-Ensure you started Ground first, and that both processes target the same address (localhost:50051 by default).
+Ensure you started Ground first, and that both processes target the same address (localhost:50051 by default)

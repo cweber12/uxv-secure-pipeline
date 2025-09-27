@@ -41,7 +41,7 @@ The server imports generated stubs from `gen/python/` (built from the `.proto` f
   pip install grpcio grpcio-tools
   ```
 
-## Generated stubs (Python) in gen/python/:
+## Generated stubs (Python) in gen/python/
 
 ```powershell
 mkdir -Force gen\python
@@ -55,22 +55,22 @@ CI also compiles the protos as a canary, but for local runs the files must exist
 
 ## How to Run
 
-### Recommended (package mode):
+### Recommended (package mode)
 
 ```powershell
 # from repo root
 .\.venv\Scripts\Activate.ps1
 python -u -m ground.server
-``` 
+```
 
-### Alternative (script mode):
+### Alternative (script mode)
 
 ```powershell
 # from repo root
 python -u .\ground\server.py
 ```
 
-## You should see:
+## You should see
 
 ```csharp
 [ground] listening on 0.0.0.0:50051
@@ -91,13 +91,13 @@ missions/
     detections.jsonl  # stream of Detection messages
 ```
 
-Each line is append-only and flushes on write (handy for demos and tailing). Example telemetry.jsonl line:
+Each line is append-only and flushes on write (handy for demos and tailing). Example `telemetry.jsonl` line:
 
 ```json
 {"ts_ns":1256911702889300,"lat":32.7000,"lon":-117.1600,"alt_m":120.0,"yaw_deg":10.0,"pitch_deg":0.5,"roll_deg":0.2,"vn":0.0,"ve":0.0,"vd":0.0}
 ```
 
-And a detections.jsonl line:
+And a `detections.jsonl` line:
 
 ```json
 {"ts_ns":1256911703001200,"cls":"target","confidence":0.91,"bbox":{"x":100,"y":150,"w":60,"h":40},"lat":32.70,"lon":-117.16}
@@ -121,7 +121,7 @@ Folder creation and file rotation are handled automatically per mission. Close/c
 
 2. Start an Edge client (Python or Node) → streams telemetry & detections.
 
-3. Ground logs each message and writes to missions/<id>/*.jsonl (if recorder enabled).
+3. Ground logs each message and writes to `missions/<id>/*.jsonl` (if recorder enabled).
 
 4. Server returns an Ack when each stream ends; client prints ack=True.
 
@@ -135,7 +135,7 @@ Folder creation and file rotation are handled automatically per mission. Close/c
 
 ### ModuleNotFoundError: No module named 'ground'
 
-- Ensure ground/__init__.py exists and run with python -m ground.server from the repo root,
+- Ensure `ground/__init__.py` exists and run with python -m ground.server from the repo root,
 - or switch from ground.recorder import ... to a relative import (from .recorder import ...).
 
 ### No output appears
@@ -150,4 +150,4 @@ Folder creation and file rotation are handled automatically per mission. Close/c
 
 ### Windows firewall prompts
 
-- Allow Python on private networks on first run.
+- Allow Python on private networks on first run
