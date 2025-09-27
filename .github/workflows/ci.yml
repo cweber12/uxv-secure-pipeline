@@ -126,12 +126,20 @@ jobs:
           Write-Host "CERT_DIR: $($env:CERT_DIR)"
 
           # Check if Ground process is still running
-          $pidPath = 'ground.pid'
-          if (Test-Path $pidPath) {
-            $pid = Get-Content $pidPath
-            Get-Process -Id $pid -ErrorAction SilentlyContinue | Format-Table Id,ProcessName,HasExited
+          Write-Host "Checking if Ground process is still running..."
+          if (Test-Path ground.pid) {
+            $groundPid = [int](Get-Content ground.pid)
+            if (-not (Get-Process -Id $groundPid -ErrorAction SilentlyContinue)) {
+              Write-Host "Ground process (PID $groundPid) is not running."
+              Write-Host "===== ground.err.log (tail) ====="
+              Get-Content (Join-Path $root 'ground.err.log') -Tail 200 -ErrorAction SilentlyContinue
+              throw "Ground process is not running"
+            } else {
+              Write-Host "Ground process (PID $groundPid) is running."
+            }
+          } else {
+            throw "ground.pid file not found; cannot verify Ground process"
           }
-          Get-NetTCPConnection -LocalPort 50051 -ErrorAction SilentlyContinue
 
           $max = 6
           for ($i=1; $i -le $max; $i++) {
