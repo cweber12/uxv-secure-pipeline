@@ -80,12 +80,11 @@ jobs:
           .\.venv\Scripts\Activate.ps1
           $root = Get-Location
           Write-Host "root: $root"
+
           # Use absolute paths for PYTHONPATH and CERT_DIR to avoid issues with working directory changes
           $env:PYTHONPATH = (Join-Path $root 'gen\python')
-          Write-Host "PYTHONPATH: $($env:PYTHONPATH)"
           $env:TLS = "1"
           $env:CERT_DIR = (Join-Path $root 'creds')
-          Write-Host "CERT_DIR: $($env:CERT_DIR)"
           $env:HOST = "127.0.0.1"
           $env:PORT = "50051"
           $env:GRPC_TRACE = "handshaker,security_handshaker,tcp"
