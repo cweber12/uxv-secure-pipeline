@@ -1,9 +1,14 @@
 # ground/mdm_client.py
 from __future__ import annotations
-import os, json, pathlib, time, logging, mimetypes, requests
+import os, json, pathlib, time, logging, mimetypes
 from typing import Optional, Tuple
 
 log = logging.getLogger(__name__)
+
+try: 
+    import requests
+except ImportError:
+    raise ImportError("mdm_client requires the 'requests' package; please install it via pip")
 
 # Config via env (override in tests/CI as needed)
 MDM_URL = os.getenv("MDM_URL", "http://127.0.0.1:8080/ingest")

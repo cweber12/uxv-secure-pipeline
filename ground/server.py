@@ -27,7 +27,6 @@ import telemetry_pb2, telemetry_pb2_grpc
 import detections_pb2, detections_pb2_grpc
 
 from ground.recorder import JsonlRecorder
-from ground import mdm_client
 
 # ---------------------------- helpers ----------------------------
 

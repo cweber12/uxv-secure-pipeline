@@ -6,10 +6,10 @@ from typing import TextIO, Dict, Any, Optional
 
 log = logging.getLogger(__name__)
 
+# soft dependency; recorder still works if this module is missing
 try:
-    # soft dependency; recorder still works if this module is missing
     from . import mdm_client
-except Exception:  # pragma: no cover
+except Exception:  
     mdm_client = None
 
 class JsonlRecorder:
