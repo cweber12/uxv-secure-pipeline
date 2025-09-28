@@ -1,0 +1,10 @@
+{
+  "name": "uxv-secure-pipeline-diagrams",
+  "private": true,
+  "devDependencies": {
+    "@mermaid-js/mermaid-cli": "^10.9.1"
+  },
+  "scripts": {
+    "diagrams": "mmdc -i diagrams/architecture-flow.mmd -o diagrams/architecture-flow.svg -b transparent && mmdc -i diagrams/architecture-seq.mmd -o diagrams/architecture-seq.svg -b transparent"
+  }
+}

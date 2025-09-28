@@ -1,0 +1,43 @@
+flowchart TB
+  %% === Styles ===
+  classDef svc fill:#eaf2ff,stroke:#2b6cb0,stroke-width:1px,color:#1a202c;
+  classDef file fill:#e8fff1,stroke:#2f855a,color:#1a202c;
+  classDef storage fill:#fff7e6,stroke:#b7791f,color:#1a202c;
+  classDef ext fill:#f7fafc,stroke:#a0aec0,stroke-dasharray:3 3,color:#1a202c;
+
+  %% === CI Runner ===
+  subgraph CI["GitHub Actions Runner"]
+    GA["Workflow: launch → probe → run"]:::ext
+  end
+
+  %% === Edge (UAS / Simulator) ===
+  subgraph EdgeSide["Edge Client (UAS / Simulator)"]
+    E["Edge gRPC Client\nPython or Go"]:::svc
+  end
+
+  %% === Ground Host ===
+  subgraph GroundHost["Ground Host"]
+    G["Ground gRPC Server\ngrpc.aio @ 127.0.0.1:50051"]:::svc
+    R["Recorder JSONL\nmissions/id"]:::svc
+    CREDS["creds/\nca.crt\nserver.crt, server.key\nclient.crt, client.key"]:::file
+    G --> R
+  end
+
+  %% === MDM ===
+  subgraph MDM["Mission Data Manager (MDM)"]
+    API["HTTP API /ingest (httplib)"]:::svc
+    FS[(LocalFS HOT storage)]:::storage
+    DB[(SQLite metadata.db)]:::storage
+    API --> FS
+    API --> DB
+  end
+
+  %% === Flows ===
+  GA -->|start bg| G
+  GA -->|probe_tls.py| G
+  E -- mTLS gRPC --> G
+  R -->|on close: POST /ingest| API
+  R -->|files: telemetry.jsonl & detections.jsonl| API
+  CREDS -. used by .-> E
+  CREDS -. used by .-> G
+

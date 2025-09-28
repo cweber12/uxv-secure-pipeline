@@ -1,0 +1,25 @@
+sequenceDiagram
+  autonumber
+  participant GA as GitHub Actions
+  participant G as Ground Server
+  participant P as probe_tls.py
+  participant E as Edge Client
+  participant R as Recorder (JSONL)
+  participant M as MDM /ingest
+
+  GA->>G: Start ground (TLS=1, CERT_DIR=creds, HOST:PORT)
+  GA->>P: Run readiness probe
+  P-->>G: mTLS handshake (SNI=localhost)
+  P-->>GA: READY
+
+  GA->>E: Launch edge client
+  E->>G: StreamTelemetry() (gRPC, mTLS)
+  E->>G: StreamDetections() (gRPC, mTLS)
+  G->>R: write(telemetry, {...})
+  G->>R: write(detections, {...})
+
+  Note over G,R: When ground shuts down
+  G->>R: close()
+  R->>M: POST /ingest (X-MDM-Meta JSON, body: file)
+  M-->>R: 200 OK { id, sha256, storage_path }
+
