@@ -2,7 +2,7 @@
 # JSONL recorder for telemetry and detections, with optional MDM ingest on close
 from __future__ import annotations
 import os, json, pathlib, time, logging
-from typing import TextIO, Dict, Any, Optional
+from typing import Optional, Dict, TextIO, Any, Callable
 
 log = logging.getLogger(__name__)
 
@@ -13,11 +13,14 @@ except Exception:
     mdm_client = None
 
 class JsonlRecorder:
+    # Create a recorder rooted at the given directory.
     def __init__(
         self,
         root: pathlib.Path,
         mission_id: Optional[str] = None,
+        *,
         ingest_on_close_flag: Optional[bool] = None,
+        ingest_close_cb: Optional[Callable[[pathlib.Path, str], None]] = None,
         mdm_url: Optional[str] = None,
         mdm_api_key: Optional[str] = None,
     ):
@@ -26,14 +29,18 @@ class JsonlRecorder:
         self.dir = self.root / self.mission_id
         self.dir.mkdir(parents=True, exist_ok=True)
         self._files: Dict[str, TextIO] = {}
-
+ 
         # env fallbacks
         if ingest_on_close_flag is None:
             ingest_on_close_flag = os.getenv("MDM_INGEST_ON_CLOSE", "1") != "0"
         self.ingest_on_close = ingest_on_close_flag
 
+        # MDM config (env fallbacks)
         self.mdm_url = mdm_url or os.getenv("MDM_URL")
         self.mdm_api_key = mdm_api_key or os.getenv("MDM_API_KEY")
+
+        # optional callback for ingesting on close
+        self._ingest_close_cb = ingest_close_cb
 
         log.debug(
             "[recorder] mission_id=%s dir=%s ingest_on_close=%s mdm_url=%s",
@@ -50,7 +57,7 @@ class JsonlRecorder:
     def write(self, stream: str, obj: Dict[str, Any]) -> None:
         f = self._open(stream)
         f.write(json.dumps(obj) + "\n")
-        f.flush()  # keep data durable for demos
+        f.flush()  
 
     # Close all open files and (optionally) ingest the mission to MDM
     def close(self) -> None:
@@ -63,6 +70,15 @@ class JsonlRecorder:
 
         if not self.ingest_on_close:
             log.info("[recorder] ingest_on_close disabled; skipping MDM ingest")
+            return
+        
+        # If a callback was provided, call that instead of the default ingest logic
+        if self._ingest_close_cb:
+            try:
+                self._ingest_close_cb(self.dir, self.mission_id)
+                log.info("[recorder] invoked provided close callback for %s", self.mission_id)
+            except Exception:
+                log.exception("[recorder] close callback raised")
             return
 
         if not self.mdm_url:

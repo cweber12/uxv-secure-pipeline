@@ -147,37 +147,18 @@ async def serve(host: str = "127.0.0.1", port: int = 50051):
     cert_dir = pathlib.Path(os.getenv("CERT_DIR", "creds")).resolve()
     host, port = _resolve_addr(host, port)
 
-    # MDM client configuration
-    mdm_url: Optional[str] = os.getenv("MDM_URL")  # e.g., http://127.0.0.1:8080/ingest
-    mdm_api_key = os.getenv("MDM_API_KEY", "")
-    mdm_concurrency = int(os.getenv("MDM_CONCURRENCY", "2"))
-    mdm_queue_size = int(os.getenv("MDM_QUEUE_SIZE", "512"))
-    mdm_timeout_s = float(os.getenv("MDM_TIMEOUT", "30"))
-    # MDM client runtime
-    ingest_rt: Optional[mdm_client.IngestRuntime] = None
-    if mdm_url:
-        ingest_rt = mdm_client.IngestRuntime(
-            url=mdm_url,
-            api_key=mdm_api_key,
-            queue_size=mdm_queue_size,
-            concurrency=mdm_concurrency,
-            timeout_s=mdm_timeout_s,
-        )
-        await ingest_rt.start()
-        print(f"[mdm] ingest runtime started url={mdm_url} q={mdm_queue_size} c={mdm_concurrency}")
-    else:
-        print("[mdm] MDM_URL unset -> ingest disabled")
+    mdm_url: Optional[str] = os.getenv("MDM_URL")          # e.g. http://127.0.0.1:8080/ingest
+    mdm_api_key: str = os.getenv("MDM_API_KEY", "")
 
-    # Debug env variables that affect gRPC handshakes
-    print(f"[env] GRPC_VERBOSITY={os.getenv('GRPC_VERBOSITY')} GRPC_TRACE={os.getenv('GRPC_TRACE')}")
-    print(f"[env] TLS={os.getenv('TLS')} CERT_DIR={cert_dir} HOST={host} PORT={port}")
+    mdm_url: Optional[str] = os.getenv("MDM_URL")          # e.g. http://127.0.0.1:8080/ingest
+    mdm_api_key: str = os.getenv("MDM_API_KEY", "")
 
-    # Mission recorder (creates missions/<mission_id>/ on first write)
     recorder = JsonlRecorder(
         root=pathlib.Path("missions"),
-        # called when the mission closes; we enqueue the entire mission dir
-        ingest_on_close=(lambda mission_dir, mission_id:
-            ingest_rt.enqueue_dir(mission_dir, mission_id) if ingest_rt else None)
+        # Use the *correct* parameter name from your class: ingest_on_close
+        ingest_on_close_flag=(os.getenv("MDM_INGEST_ON_CLOSE", "1") != "0"),
+        mdm_url=mdm_url,
+        mdm_api_key=mdm_api_key,
     )
 
     # Create gRPC server
@@ -211,17 +192,10 @@ async def serve(host: str = "127.0.0.1", port: int = 50051):
         print("[ground] server started")
         await server.wait_for_termination()
     finally:
-        # ensure recorder files are closed 
         try:
-            recorder.close()
+            recorder.close()  # triggers MDM POSTs per file if enabled
         except Exception as e:
             print(f"[recorder] close error: {e}")
-        # drain MDM queue and close HTTP
-        if ingest_rt:
-            try:
-                await ingest_rt.drain_and_close()
-            except Exception as e:
-                print(f"[mdm] drain/close error: {e}")
 
 
 if __name__ == "__main__":
