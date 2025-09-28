@@ -17,7 +17,7 @@ class JsonlRecorder:
         self,
         root: pathlib.Path,
         mission_id: Optional[str] = None,
-        ingest_on_close: Optional[bool] = None,
+        ingest_on_close_flag: Optional[bool] = None,
         mdm_url: Optional[str] = None,
         mdm_api_key: Optional[str] = None,
     ):
@@ -28,9 +28,9 @@ class JsonlRecorder:
         self._files: Dict[str, TextIO] = {}
 
         # env fallbacks
-        if ingest_on_close is None:
-            ingest_on_close = os.getenv("MDM_INGEST_ON_CLOSE", "1") != "0"
-        self.ingest_on_close = ingest_on_close
+        if ingest_on_close_flag is None:
+            ingest_on_close_flag = os.getenv("MDM_INGEST_ON_CLOSE", "1") != "0"
+        self.ingest_on_close = ingest_on_close_flag
 
         self.mdm_url = mdm_url or os.getenv("MDM_URL")
         self.mdm_api_key = mdm_api_key or os.getenv("MDM_API_KEY")

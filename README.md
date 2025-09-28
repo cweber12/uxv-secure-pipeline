@@ -226,7 +226,7 @@ missions/
 
 ## Sending Data to the Mission Data Manager (MDM)
 
-GitHub (MDM) : [GitHub](https://github.com/cweber12/mission-data-manager.git)
+[https://github.com/cweber12/mission-data-manager.git](https://github.com/cweber12/mission-data-manager.git)
 
 Ground can auto-ingest mission files when a mission closes. Set:
   Linux/macOS:  export MDM_URL="http://127.0.0.1:8080/ingest"  # optional: export MDM_API_KEY="your-key"
