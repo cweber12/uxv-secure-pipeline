@@ -224,6 +224,25 @@ node_modules/
 missions/
 ```
 
+## Sending Data to the Mission Data Manager (MDM)
+
+GitHub (MDM) : [GitHub](https://github.com/cweber12/mission-data-manager.git)
+
+Ground can auto-ingest mission files when a mission closes. Set:
+  Linux/macOS:  export MDM_URL="http://127.0.0.1:8080/ingest"  # optional: export MDM_API_KEY="your-key"
+  Windows PS:   $env:MDM_URL = "http://127.0.0.1:8080/ingest"   # optional: $env:MDM_API_KEY = "your-key"
+
+When the recorder closes, each file in missions/<mission_id>/ is POSTed to MDM. If MDM is down, files remain local; you can re-send them manually.
+
+### HTTP Contract
+
+- Endpoint:  POST /ingest
+- Body:      raw file bytes
+- Headers:
+  - Content-Type: actual file type (e.g., `application/x-ndjson`, `application/octet-stream`)
+  - X-MDM-Meta: JSON string (must include "mission_id"; others recommended: logical_name, object_type, content_type, capture_time, tags)
+  - X-API-Key: (optional, if auth enabled)
+
 ## Troubleshooting
 
 ### ModuleNotFoundError: telemetry_pb2 / detections_pb2
@@ -241,7 +260,3 @@ missions/
 ### Node client can’t connect (ECONNREFUSED)
 
 - Start Ground first; confirm same port (localhost:50051 by default).
-
-### Windows line continuations
-
-- Prefer the one-line PowerShell commands shown above
