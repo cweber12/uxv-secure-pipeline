@@ -208,7 +208,76 @@ This project uses GitHub Actions for continuous integration and end-to-end testi
 
 - Commit your changes (stubs in gen/ stay untracked).
 
-Compatibility tip: Never reuse field numbers in .proto. If you remove a field, mark its number reserved.
+## Architecture Diagrams
+
+This repo includes two Mermaid-based architecture diagrams. The `.mmd` sources live in `diagrams/` and compile to `.svg` so they render directly on GitHub.
+
+### Quick View
+
+#### System Flow
+
+![UXV Secure Pipeline – Architecture Flow](diagrams/architecture-flow.svg)
+
+#### TLS & Ingest Sequence
+
+![UXV Secure Pipeline – Architecture Sequence](diagrams/architecture-seq.svg)
+
+> Sources:  
+> • [`diagrams/architecture-flow.mmd`](diagrams/architecture-flow.mmd)  
+> • [`diagrams/architecture-seq.mmd`](diagrams/architecture-seq.mmd)
+
+---
+
+## Generate / Update the Diagrams
+
+### 1. Install Mermaid CLI (dev dependency)
+
+```bash
+npm i -D @mermaid-js/mermaid-cli@^10.9.1
+```
+
+### 2. Add the script to package.json
+
+```json
+{
+  "scripts": {
+    "diagrams": "mmdc -i diagrams/architecture-flow.mmd -o diagrams/architecture-flow.svg -b transparent && mmdc -i diagrams/architecture-seq.mmd -o diagrams/architecture-seq.svg -b transparent"
+  }
+}
+```
+
+### 3. Render the SVGs
+
+```bash
+npm run diagrams
+```
+
+This produces/updates:
+
+- diagrams/architecture-flow.svg
+
+- diagrams/architecture-seq.svg
+
+Commit the updated .svg files so they display in the README.
+
+### Notes / Troubleshooting
+
+- Mermaid parse errors are usually formatting issues in .mmd:
+- Keep end on its own line (don’t append it to an edge).
+- For dotted edges with labels: A -. label .-> B (include both -. and .->).
+- If Chromium cannot auto-install (corporate environments), point Puppeteer to a local Chrome:
+
+### macOS/Linux
+
+```bash
+export PUPPETEER_EXECUTABLE_PATH="/usr/bin/google-chrome"
+Windows (PowerShell):
+```
+
+```powershell
+$env:PUPPETEER_EXECUTABLE_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"
+Run npm ci && npm run diagrams in CI to regenerate diagrams and commit artifacts if they change.
+```
 
 ## `.gitignore` (recommended)
 
